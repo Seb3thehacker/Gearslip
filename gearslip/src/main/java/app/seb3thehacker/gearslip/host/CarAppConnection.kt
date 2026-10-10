@@ -2,6 +2,9 @@ package app.seb3thehacker.gearslip.host
 
 import app.seb3thehacker.gearslip.car.CarEnvironment
 import app.seb3thehacker.gearslip.car.CarToasts
+import app.seb3thehacker.gearslip.car.CarSuggestions
+import app.seb3thehacker.gearslip.car.CallPrompt
+import android.annotation.SuppressLint
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -17,6 +20,7 @@ import android.os.Looper
 import android.view.Surface
 import androidx.car.app.CarAppService
 import androidx.car.app.CarContext
+import androidx.car.app.CarToast
 import androidx.car.app.HandshakeInfo
 import androidx.car.app.IAppHost
 import androidx.car.app.IAppManager
@@ -31,6 +35,7 @@ import androidx.car.app.AppInfo
 import androidx.car.app.constraints.ConstraintManager
 import androidx.car.app.constraints.IConstraintHost
 import androidx.car.app.suggestion.ISuggestionHost
+import androidx.car.app.suggestion.model.Suggestion
 import androidx.car.app.hardware.ICarHardwareHost
 import androidx.car.app.hardware.ICarHardwareResult
 import androidx.car.app.navigation.INavigationHost
@@ -82,8 +87,8 @@ class CarAppConnection(private val context: Context) {
     val template: StateFlow<Template?> = _template.asStateFlow()
 
     private val main = Handler(Looper.getMainLooper())
-    /** Captured by each host Binder so callbacks queued by a replaced app cannot show a toast. */
-    private var toastOwner = Any()
+    /** Captured by each host Binder so callbacks queued by a replaced app cannot show toasts or change its suggestions. */
+    private var hostOwner = Any()
 
     private var carApp: ICarApp? = null
     private var appManager: IAppManager? = null
@@ -95,6 +100,7 @@ class CarAppConnection(private val context: Context) {
 
     private var binding: ServiceConnection? = null
     private var component: ComponentName? = null
+    private var isNavigation = false
 
     /** Whose icon the header shows for the standard app-icon action. */
     val appPackage: String? get() = component?.packageName
@@ -119,6 +125,7 @@ class CarAppConnection(private val context: Context) {
         frameHeight = height
         frameDensity = densityDpi
         component = app.component
+        isNavigation = app.isNavigation
         pendingDestination = destination
         update { Status(phase = Phase.BINDING, app = app.label) }
 
@@ -223,7 +230,7 @@ class CarAppConnection(private val context: Context) {
     fun disconnect() = disconnect(keepLocation = false)
 
     private fun disconnect(keepLocation: Boolean) {
-        clearToasts()
+        clearHostState()
         lent?.let { sendSurfaceDestroyed(it) }
         lent = null
         val carApp = this.carApp
@@ -293,8 +300,9 @@ class CarAppConnection(private val context: Context) {
         val intent = pendingDestination?.let { navigateIntent(it) }
             ?: Intent(Intent.ACTION_MAIN).setComponent(component)
         pendingDestination = null
+        if (isNavigation) CarSuggestions.begin(hostOwner)
         call("onAppCreate", onValue = { onCreated() }) {
-            app.onAppCreate(createCarHost(toastOwner), intent, carConfiguration(), it)
+            app.onAppCreate(createCarHost(hostOwner), intent, carConfiguration(), it)
         }
     }
 
@@ -576,7 +584,7 @@ class CarAppConnection(private val context: Context) {
         override fun showToast(text: CharSequence?, duration: Int) {
             val message = text?.toString() ?: return
             main.post {
-                if (toastOwner !== owner) return@post
+                if (hostOwner !== owner) return@post
                 GearslipLog.i("host: toast \"$message\"")
                 CarToasts.show(owner, message, duration)
             }
@@ -669,18 +677,56 @@ class CarAppConnection(private val context: Context) {
         override fun isAppDrivenRefreshEnabled(): Boolean = true
     }
 
-    /**
-     * Accepts the shortcuts an app offers for a car launcher.
-     *
-     * Gearslip has nowhere to show these yet, but accepting and dropping them is right: an app
-     * that pushes suggestions shouldn't fail because its host doesn't surface them.
-     */
-    private val suggestionHost = object : ISuggestionHost.Stub() {
-        override fun updateSuggestions(suggestions: Bundleable?) = Unit
+    /** Navigation apps may replace their entire suggestion list, including clearing it. */
+    private fun createSuggestionHost(owner: Any, navigation: Boolean) = object : ISuggestionHost.Stub() {
+        override fun updateSuggestions(suggestions: Bundleable?) {
+            if (!navigation) return
+            val values = runCatching { suggestions?.get() }.getOrNull() as? List<*> ?: return
+            val shortcuts = values.mapNotNull { value ->
+                // Bundles come from another process; one malformed item must not crash the host.
+                runCatching { (value as? Suggestion)?.toShortcut(owner) }.getOrNull()
+            }
+            main.post { CarSuggestions.replace(owner, shortcuts) }
+        }
+    }
+
+    private fun Suggestion.toShortcut(owner: Any): CarSuggestions.Shortcut? {
+        val pendingIntent = action ?: return null
+        return CarSuggestions.Shortcut(identifier, title.toString(), subtitle?.toString(), icon) {
+            sendSuggestionAction(context, pendingIntent) { intent ->
+                main.post {
+                    if (hostOwner === owner && _status.value.phase == Phase.RUNNING) {
+                        openSuggestedDestination(intent, owner)
+                    }
+                }
+            }
+        }
+    }
+
+    /** Resume the live map rather than launching its phone activity or rebuilding its session. */
+    @SuppressLint("RestrictedApi") // Delivery stays on the already authenticated CarAppService Binder.
+    private fun openSuggestedDestination(intent: Intent, owner: Any) {
+        val app = carApp ?: return
+        val target = intent.component
+        when {
+            target == component || (target == null && intent.action == CarContext.ACTION_NAVIGATE && intent.data?.scheme == "geo") -> {
+                val destination = Intent(intent).setComponent(component)
+                // The callback grants one launch, not a capability to pass on to the hosted app.
+                destination.removeExtra(CarContext.EXTRA_START_CAR_APP_BINDER_KEY)
+                runCatching { app.onNewIntent(destination, noop("suggestion onNewIntent")) }
+                    .onFailure { CarToasts.show(owner, "Could not open this suggestion.", CarToast.LENGTH_LONG) }
+            }
+            target == null && intent.action in listOf(Intent.ACTION_DIAL, Intent.ACTION_CALL) && intent.data?.scheme == "tel" -> {
+                val number = intent.data?.schemeSpecificPart.orEmpty()
+                if (number.isNotBlank()) CallPrompt.ask(number, number)
+            }
+            else -> CarToasts.show(owner, "This suggestion cannot be opened here.", CarToast.LENGTH_LONG)
+        }
     }
 
     private fun createCarHost(owner: Any) = object : ICarHost.Stub() {
         private val appHost = createAppHost(owner)
+        private val suggestionHost = createSuggestionHost(owner, isNavigation)
 
         override fun getHost(type: String?): IBinder? = when (type) {
             CarContext.APP_SERVICE -> appHost.asBinder()
@@ -770,14 +816,15 @@ class CarAppConnection(private val context: Context) {
     }
 
     private fun fail(phase: Phase, detail: String) {
-        clearToasts()
+        clearHostState()
         GearslipLog.e("host: $detail")
         update { it.copy(phase = phase, detail = detail) }
     }
 
-    private fun clearToasts() {
-        CarToasts.clear(toastOwner)
-        toastOwner = Any()
+    private fun clearHostState() {
+        CarSuggestions.clear(hostOwner)
+        CarToasts.clear(hostOwner)
+        hostOwner = Any()
     }
 
     private fun update(block: (Status) -> Status) {
