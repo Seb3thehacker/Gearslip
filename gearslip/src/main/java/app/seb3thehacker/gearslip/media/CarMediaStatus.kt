@@ -31,7 +31,7 @@ class CarMediaStatus(
     fun onMessage(messageId: Int, body: ByteArray) {
         when (messageId) {
             MSG_CHANNEL_OPEN_RESPONSE -> {
-                val status = Protobuf.readInt32Field(body, 1) ?: 0
+                val status = Protobuf.readInt32Field(body, 1)
                 GearslipLog.i("media status: <- ChannelOpenResponse: status=$status")
                 if (status == 0) start()
             }

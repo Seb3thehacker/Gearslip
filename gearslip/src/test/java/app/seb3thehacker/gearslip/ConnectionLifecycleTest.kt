@@ -1,5 +1,6 @@
 package app.seb3thehacker.gearslip
 
+import android.view.Surface
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -133,4 +134,26 @@ class ConnectionLifecycleTest {
             assertTrue((field.get(runner) as ExecutorService).isShutdown)
         }
     }
+    @Test fun `touchpad reports are not injected as touchscreen taps`() {
+        var touches = 0
+        val projection = object : Projection {
+            override fun onSurfaceReady(surface: Surface, width: Int, height: Int, densityDpi: Int) = Unit
+            override fun onTouch(action: Int, actionIndex: Int, points: List<TouchPoint>) { touches++ }
+            override fun onProjectionStopped() = Unit
+        }
+        val runner = GearslipRunner(ByteArrayInputStream(byteArrayOf()), ByteArrayOutputStream(), ::identity, projection)
+        val input = GearslipRunner::class.java.getDeclaredMethod("onInputReport", ByteArray::class.java)
+            .apply { isAccessible = true }
+        val touch = Protobuf.bytesField(1, Protobuf.varintField(1, 100) +
+            Protobuf.varintField(2, 200) + Protobuf.varintField(3, 0))
+        try {
+            input.invoke(runner, Protobuf.varintField(1, 1000) + Protobuf.bytesField(7, touch))
+            assertEquals(0, touches)
+            input.invoke(runner, Protobuf.varintField(1, 1000) + Protobuf.bytesField(3, touch))
+            assertEquals(1, touches)
+        } finally {
+            runner.stop()
+        }
+    }
+
 }
