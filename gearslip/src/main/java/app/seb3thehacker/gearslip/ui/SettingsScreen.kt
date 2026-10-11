@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -33,12 +34,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import app.seb3thehacker.gearslip.AppSettings
 import app.seb3thehacker.gearslip.BuildConfig
 import app.seb3thehacker.gearslip.CertProvider
+import app.seb3thehacker.gearslip.car.CarSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
@@ -103,6 +107,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(0.dp))
             AboutSection(onOpenWhatsNew, onReplayTutorial)
             ConnectionSection()
+            CarAudioSection()
             if (SHOW_RECOMMENDED_APPS) AppsSection(onOpenRecommendedApps)
             CertificateSection()
             SettingsSection("Usage notes", header = USAGE_STATS_INTRO) { UsageStatsRows() }
@@ -159,6 +164,30 @@ private fun ConnectionSection() {
             subtitle = if (enabled) "Gearslip answers when you plug into a car" else "Off: Android Auto can take the connection instead",
             icon = Icons.Filled.Settings,
             trailing = { Switch(checked = enabled, onCheckedChange = null) },
+        )
+    }
+}
+
+/** How music reaches the car: through Gearslip over USB, or by Bluetooth as usual. */
+@Composable
+private fun CarAudioSection() {
+    val usb by CarSettings.pipeAudio.collectAsState()
+    SettingsSection(
+        "Car audio",
+        footer = "Run the command in Help once, and USB stops asking.",
+    ) {
+        SettingsRow(
+            "USB",
+            Modifier.selectable(usb, role = Role.RadioButton) { CarSettings.setPipeAudio(true) },
+            subtitle = "Sound goes through Gearslip. Android asks to share your screen each drive",
+            trailing = { RadioButton(selected = usb, onClick = null) },
+        )
+        SettingsDivider()
+        SettingsRow(
+            "Bluetooth",
+            Modifier.selectable(!usb, role = Role.RadioButton) { CarSettings.setPipeAudio(false) },
+            subtitle = "Sound plays over the phone's Bluetooth link to the car. Android never asks",
+            trailing = { RadioButton(selected = !usb, onClick = null) },
         )
     }
 }

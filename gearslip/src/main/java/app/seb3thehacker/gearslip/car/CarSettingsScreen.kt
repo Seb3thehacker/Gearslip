@@ -126,14 +126,14 @@ fun CarSettingsScreen() {
         ) { CarSettings.setAutoplay(it) }
 
         ChoiceRow(
-            "Media audio",
-            listOf(false to "Phone audio", true to "Car audio"),
+            "Car audio",
+            listOf(false to "Bluetooth", true to "USB"),
             pipeAudio,
         ) { CarSettings.setPipeAudio(it) }
         Text(
-            "Car audio sends the phone's sound to the car over USB. Android asks for permission " +
-                "when the car connects, and a few apps block it. Phone audio plays as the phone " +
-                "normally would, for example over Bluetooth to the car.",
+            "USB sends the phone's sound through Gearslip. Android asks to share your screen each " +
+                "drive, and a few apps block it. Bluetooth plays as the phone normally would, and " +
+                "Android never asks.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
