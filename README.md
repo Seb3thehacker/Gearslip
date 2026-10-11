@@ -100,6 +100,14 @@ turn them on, in setup or in Settings.
 
 Turn the notes off, and they stop at once.
 
+## How Gearslip is made
+
+Gearslip is my beloved child. I decide what it does and how it looks, and AI coding tools
+help me write the code. I test every change myself before it ships: in a real car, with
+both a GrapheneOS phone and a stock Android phone, and on [LIVI](https://github.com/f-io/LIVI),
+the open-source head unit software. If something breaks, that's on me, so please open an
+issue.
+
 ## Building
 
 ```
