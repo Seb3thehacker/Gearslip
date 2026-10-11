@@ -11,7 +11,7 @@ data class CertSummary(
     val headline: String,
     val subject: String?,
     val issuer: String?,
-    val validUntil: String?,
+    val expiry: String?,
 ) {
     companion object {
         /**
@@ -28,31 +28,28 @@ data class CertSummary(
             val identity = CertProvider.loadSupplied(context)
                 ?: return CertSummary(
                     CertProvider.Kind.SELF_SIGNED,
-                    "None loaded (self-signed; cars reject it)",
+                    "No certificate available",
                     null, null, null,
                 )
             val cert = identity.certificate
-            val name = friendlyName(cert.subjectX500Principal.name)
-            val prefix = when (identity.kind) {
-                    CertProvider.Kind.IMPORTED -> "Imported"
-                    CertProvider.Kind.DOWNLOADED -> "Downloaded"
-                    CertProvider.Kind.ADB_STAGED -> "Staged over adb"
-                    CertProvider.Kind.SELF_SIGNED -> "Self-signed"
-                }
+            val name = when (identity.kind) {
+                CertProvider.Kind.IMPORTED -> "Imported certificate"
+                CertProvider.Kind.DOWNLOADED -> identity.downloadedSource?.label ?: "Downloaded certificate"
+                CertProvider.Kind.ADB_STAGED -> "Certificate supplied via ADB"
+                CertProvider.Kind.SELF_SIGNED -> "No certificate available"
+            }
             return CertSummary(
                 identity.kind,
-                "$prefix: $name",
+                name,
                 cert.subjectX500Principal.name,
                 cert.issuerX500Principal.name,
-                DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(cert.notAfter.time)),
+                certificateExpiry(cert.notAfter),
             )
         }
-
-        private fun friendlyName(distinguishedName: String): String {
-            for (key in listOf("CN", "O")) {
-                Regex("(?:^|,)$key=([^,]+)").find(distinguishedName)?.let { return it.groupValues[1] }
-            }
-            return distinguishedName
-        }
     }
+}
+
+internal fun certificateExpiry(date: Date): String {
+    val formatted = DateFormat.getDateInstance(DateFormat.MEDIUM).format(date)
+    return if (Date().after(date)) "Expired $formatted" else "Expires $formatted"
 }

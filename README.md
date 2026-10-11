@@ -6,11 +6,6 @@ An Android Auto alternative built for everyone.
 
 [<img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="54">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/Seb3thehacker/gearslip)
 
-## Which cars work
-
-Most cars work. Starting around 2020, some cars added newer security standards that reject
-Gearslip's certificate, and Gearslip can't run in those cars.
-
 ## What Gearslip is
 
 Gearslip is an Android Auto client for the phone. It speaks the Android Auto protocol
@@ -57,8 +52,9 @@ mode.
 
 - **The connection is wired only, for now.** Plug the phone into the head unit's USB port;
   Gearslip does not yet offer a wireless option.
-- **Setup walks you through it.** First launch asks for the Android Auto certificate,
-  then one permission at a time, each with a plain reason and an Allow or Skip. A help
+- **Setup walks you through it.** First launch downloads the latest Android Auto and DHU
+  certificates automatically, with manual import also available.
+  It then asks for one permission at a time, with an Allow or Skip. A help
   screen inside the car answers anything setup didn't cover.
 - **Templated apps work.** Gearslip renders all 16 template types that the Car App
   Library defines, and it draws its own keyboard for search, sign-in, and text fields.
@@ -117,6 +113,18 @@ keystore. Without them, the debug build still works.
 
 [docs/BUILDING_APPS.md](docs/BUILDING_APPS.md) specifies how to write apps that Gearslip
 can render: templated apps, media apps, and the Gearslip app protocol.
+
+## Certificates
+
+Certificates help Gearslip connect to your car. The app automatically downloads the
+latest Android Auto and head-unit certificates from
+[iscle/android-auto-certificates](https://github.com/iscle/android-auto-certificates)
+and saves them for offline use. If an update fails, it keeps the last working copy.
+No certificates or private keys are included in the app itself.
+
+You can import your own certificate during setup or in **Settings → Certificate**.
+Your imported certificate takes priority until you remove it. Settings also lets you
+check for updates or choose which downloaded certificate to use.
 
 ## Trademarks
 

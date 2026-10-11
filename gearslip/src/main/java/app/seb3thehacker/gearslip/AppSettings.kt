@@ -3,6 +3,7 @@ package app.seb3thehacker.gearslip
 import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
+import androidx.core.content.edit
 
 /** User-facing preferences. Read fresh on every session, so changes apply on the next connect. */
 object AppSettings {
@@ -24,6 +25,16 @@ object AppSettings {
         prefs(context).edit().putString(key, value).apply()
     }
 
+    /** Old Automatic preferences and unknown values resolve to the default phone identity. */
+    fun certificateSource(context: Context): CertProvider.Source {
+        val saved = getString(context, "certificate_mode", CertProvider.Source.ANDROID_AUTO.name)
+        return CertProvider.Source.entries.firstOrNull { it.name == saved } ?: CertProvider.Source.ANDROID_AUTO
+    }
+
+    fun setCertificateSource(context: Context, source: CertProvider.Source) {
+        putString(context, "certificate_mode", source.name)
+    }
+
     /** Blank means "use the built-in test page". */
     fun startupUrl(context: Context): String =
         prefs(context).getString(KEY_STARTUP_URL, "").orEmpty()
@@ -38,6 +49,13 @@ object AppSettings {
 
     fun setSeenCompatWarning(context: Context) {
         prefs(context).edit().putBoolean(KEY_SEEN_COMPAT_WARNING, true).apply()
+    }
+
+    fun hasCompletedCertificateSetup(context: Context): Boolean =
+        prefs(context).getBoolean("extracted_certificate_setup_complete", false)
+
+    fun setCompletedCertificateSetup(context: Context) {
+        prefs(context).edit { putBoolean("extracted_certificate_setup_complete", true) }
     }
 
     /** Whether the certificate setup screen has been deliberately skipped. */
