@@ -205,12 +205,37 @@ object UsageStats {
         p.edit().putString(KEY_CARS, cars.toString()).commit()
     }
 
-    // GrapheneOS reports the same build fields as stock Pixel firmware; its own apps give it away.
-    private fun isGrapheneOs(context: Context) =
-        runCatching { context.packageManager.getPackageInfo("app.grapheneos.setupwizard", 0) }.isSuccess
+    /**
+     * Which Android this is: a privacy OS by name, or "Stock" with the phone's brand.
+     *
+     * GrapheneOS reports the same build fields as stock Pixel firmware, so its own setup app gives
+     * it away; /e/OS is told apart from the LineageOS it's built on by its app store. The rest set
+     * build properties of their own. The iodéOS and DivestOS checks are best guesses from their
+     * build names, not confirmed on a real phone.
+     */
+    fun osName(context: Context): String {
+        fun installed(pkg: String) = runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
+        val names = listOf("ro.build.flavor", "ro.build.display.id", "ro.lineage.version")
+            .joinToString(" ") { prop(it) } + " " + Build.DISPLAY + " " + Build.FINGERPRINT
+        return when {
+            installed("app.grapheneos.setupwizard") -> "GrapheneOS"
+            prop("ro.calyxos.version").isNotEmpty() -> "CalyxOS"
+            installed("foundation.e.apps") -> "/e/OS"
+            names.contains("iode", ignoreCase = true) -> "iodéOS"
+            names.contains("divest", ignoreCase = true) -> "DivestOS"
+            prop("ro.lineage.version").isNotEmpty() -> "LineageOS"
+            else -> "Stock (${Build.BRAND.replaceFirstChar { it.uppercase() }})"
+        }
+    }
+
+    /** A system property, or "" when it isn't set or can't be read. */
+    private fun prop(name: String): String = runCatching {
+        Class.forName("android.os.SystemProperties").getMethod("get", String::class.java)
+            .invoke(null, name) as String
+    }.getOrDefault("")
 
     private fun details(context: Context, c: Choices) = JSONObject().apply {
-        if (c.android) put("android", Build.VERSION.RELEASE).put("os", if (isGrapheneOs(context)) "GrapheneOS" else "other")
+        if (c.android) put("android", Build.VERSION.RELEASE).put("os", osName(context))
         if (c.phone) put("phone", "${Build.MANUFACTURER} ${Build.MODEL}")
     }
 

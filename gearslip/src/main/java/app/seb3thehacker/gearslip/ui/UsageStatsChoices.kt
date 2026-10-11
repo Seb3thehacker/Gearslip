@@ -106,7 +106,7 @@ internal fun ColumnScope.UsageStatsRows() {
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(start = 56.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
             )
-            Choice("Android version, and whether it's GrapheneOS", choices.android) { choices = choices.copy(android = it); save() }
+            Choice("Android version and system, such as GrapheneOS or stock Samsung", choices.android) { choices = choices.copy(android = it); save() }
             Choice("Phone model", choices.phone) { choices = choices.copy(phone = it); save() }
             Choice("Each car's head unit, model, year, and screen size, and whether it connected", choices.cars) {
                 choices = choices.copy(cars = it)
