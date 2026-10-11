@@ -1,5 +1,6 @@
 package app.seb3thehacker.gearslip
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,6 +41,14 @@ class CryptoTest {
             ss.keyStore, ss.certificate, SelfSignedCert.PASSWORD, "test",
         )
         assertTrue(TlsSelfTest.run(identity))
+    }
+
+    @Test
+    fun `TLS rejects a head unit that does not present a client certificate`() {
+        val generated = SelfSignedCert.generate()
+        val identity = CertProvider.Identity(generated.keyStore, generated.certificate,
+            SelfSignedCert.PASSWORD, "test")
+        assertFalse(TlsSelfTest.run(identity, withClientCertificate = false))
     }
 
     @Test
