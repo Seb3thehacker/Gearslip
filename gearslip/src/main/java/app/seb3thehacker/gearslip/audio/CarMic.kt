@@ -4,22 +4,11 @@ import app.seb3thehacker.gearslip.GearslipLog
 import app.seb3thehacker.gearslip.Protobuf
 import app.seb3thehacker.gearslip.ServiceDiscovery
 import app.seb3thehacker.gearslip.Wire
+import app.seb3thehacker.gearslip.protocol.MediaProtocol
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
-/**
- * The car's own microphone, which most head units offer over the same link as the screen:
- *
- *   -> CHANNEL_OPEN_REQUEST          <- CHANNEL_OPEN_RESPONSE
- *   -> Setup { config_index }        <- Config
- *   -> MicrophoneRequest { open }    <- MicrophoneResponse { status, session_id }
- *   <- Data { 8-byte timestamp, PCM }...   -> Ack { session_id, ack }
- *   -> MicrophoneRequest { open = false }
- *
- * The channel opens with the session, but the car only records between [start] and [stop].
- * Speech wants 16 kHz mono; a car that records at a multiple of that is averaged down to it, and
- * one that doesn't isn't used, so voice falls back to the phone's microphone.
- */
+/** The head unit's PCM source. Recording starts directly with MicrophoneRequest, without Setup. */
 class CarMic(
     private val service: ServiceDiscovery.AudioService,
     private val sendOnChannel: (messageId: Int, body: ByteArray) -> Unit,
@@ -28,48 +17,62 @@ class CarMic(
 
     private val config = service.configs.first()
     private val step = config.sampleRate / RATE
-    private val usable = service.codecType == ServiceDiscovery.CODEC_PCM && config.bits == 16 &&
+    private val usable = service.codecType == ServiceDiscovery.CODEC_PCM && config.isSupportedPcm() &&
         config.sampleRate % RATE == 0 && step >= 1 && config.channels in 1..2
 
     @Volatile private var ready = false
     @Volatile private var listening = false
-    @Volatile private var session = 0
+    private var session: Int? = null
+    private var closed = false
+    private val pendingRequests = ArrayDeque<Boolean>()
     private var packets = 0
-    private val chunks = LinkedBlockingQueue<ShortArray>()
+    private val chunks = LinkedBlockingQueue<ShortArray>(64)
 
+    @Synchronized
     fun onMessage(messageId: Int, body: ByteArray) {
+        if (closed) return
         when (messageId) {
             MSG_CHANNEL_OPEN_RESPONSE -> {
-                val status = Protobuf.readInt32Field(body, 1) ?: 0
-                GearslipLog.i("mic: <- ChannelOpenResponse: status=$status")
-                if (status != 0) return
-                sendOnChannel(MSG_SETUP, Protobuf.varintField(1, 0L))
-                ready = usable
-                if (!usable) {
-                    GearslipLog.w(
-                        "mic: the car records ${service.codecName} ${config.sampleRate}Hz/${config.bits}bit/x${config.channels}, " +
-                            "which speech can't use - voice stays on the phone's microphone",
-                    )
-                }
+                ready = Protobuf.readInt32Field(body, 1) == 0 && usable
+                if (!ready) GearslipLog.w("mic: no supported PCM microphone; voice uses the phone")
             }
-
-            MSG_CONFIG -> GearslipLog.i("mic: <- Config status=${Wire.varint(Wire.fields(body), 1)}")
-
-            MSG_MIC_RESPONSE -> {
-                val fields = Wire.fields(body)
-                session = Wire.varint(fields, 2)?.toInt() ?: 0
-                GearslipLog.i("mic: <- MicrophoneResponse status=${Wire.varint(fields, 1)} session=$session")
-            }
-
-            MSG_DATA -> {
-                sendOnChannel(MSG_ACK, Protobuf.varintField(1, session.toLong()) + Protobuf.varintField(2, 1L))
-                if (!listening || body.size <= TIMESTAMP_BYTES) return
-                if (packets++ == 0) GearslipLog.i("mic: first audio from the car (${body.size - TIMESTAMP_BYTES} bytes)")
-                chunks.offer(toSpeechRate(body))
-            }
-
-            else -> GearslipLog.i("mic: <- unhandled message id=$messageId (${body.size} bytes)")
+            MediaProtocol.MICROPHONE_RESPONSE -> onResponse(body)
+            MediaProtocol.DATA -> onData(body)
+            MediaProtocol.UNEXPECTED_MESSAGE -> close()
+            else -> GearslipLog.i("mic: unhandled message id=$messageId (${body.size} bytes)")
         }
+    }
+
+    private fun onResponse(body: ByteArray) {
+        val opening = pendingRequests.removeFirstOrNull() ?: return
+        val fields = Wire.fields(body)
+        val success = Wire.varint(fields, 1)?.toInt() == 0
+        session = if (opening && success) Wire.varint(fields, 2)?.toInt() else null
+        if (session == null) {
+            listening = false
+            chunks.clear()
+        }
+        GearslipLog.i("mic: response to ${if (opening) "open" else "close"}, success=$success")
+    }
+
+    private fun onData(body: ByteArray) {
+        val activeSession = session ?: return
+        val pcmSize = body.size - TIMESTAMP_BYTES
+        if (pcmSize <= 0 || pcmSize % (2 * config.channels) != 0) return
+        sendOnChannel(MediaProtocol.ACK, MediaProtocol.ack(activeSession))
+        if (!listening) return
+        // Bound both individual packets and the queue if speech stops consuming the stream.
+        if (pcmSize > config.sampleRate * 2 * config.channels) {
+            stop()
+            return
+        }
+        val samples = toSpeechRate(body)
+        if (samples.isEmpty()) return
+        if (!chunks.offer(samples)) {
+            GearslipLog.w("mic: speech is not consuming audio; stopping recording")
+            stop()
+        }
+        packets++
     }
 
     /** Little-endian PCM after the timestamp, mixed to mono and averaged down to [RATE]. */
@@ -92,24 +95,44 @@ class CarMic(
     }
 
     /** Asks the car to start recording. False when it can't, so the phone's microphone is used. */
+    @Synchronized
     fun start(): Boolean {
-        if (!ready) return false
+        if (!ready || closed || listening || pendingRequests.isNotEmpty()) return false
         chunks.clear()
         packets = 0
+        session = null
         listening = true
-        sendOnChannel(MSG_MIC_REQUEST, Protobuf.varintField(1, 1L) + Protobuf.varintField(4, 1L))
-        GearslipLog.i("mic: -> MicrophoneRequest(open)")
+        requestRecording(true)
         return true
     }
 
-    /** The next piece of audio, or null if the car sent nothing for [timeoutMs]. */
+    /** Speech falls back to the phone if the request fails or no audio arrives within its timeout. */
     fun read(timeoutMs: Long): ShortArray? = chunks.poll(timeoutMs, TimeUnit.MILLISECONDS)
 
+    @Synchronized
     fun stop() {
         if (!listening) return
         listening = false
-        sendOnChannel(MSG_MIC_REQUEST, Protobuf.varintField(1, 0L))
-        GearslipLog.i("mic: -> MicrophoneRequest(close) after $packets packets")
+        chunks.clear()
+        requestRecording(false)
+        GearslipLog.i("mic: -> close after $packets packets")
+    }
+
+    private fun requestRecording(open: Boolean) {
+        pendingRequests.addLast(open)
+        var body = Protobuf.varintField(1, if (open) 1 else 0)
+        if (open) body += Protobuf.varintField(4, 1) // max_unacked: acknowledge each received packet
+        sendOnChannel(MediaProtocol.MICROPHONE_REQUEST, body)
+    }
+
+    @Synchronized
+    fun close() {
+        stop()
+        closed = true
+        ready = false
+        session = null
+        pendingRequests.clear()
+        chunks.clear()
     }
 
     companion object {
@@ -119,11 +142,5 @@ class CarMic(
         const val RATE = 16_000
         private const val TIMESTAMP_BYTES = 8
         private const val MSG_CHANNEL_OPEN_RESPONSE = 8
-        private const val MSG_DATA = 0
-        private const val MSG_SETUP = 32768
-        private const val MSG_CONFIG = 32771
-        private const val MSG_ACK = 32772
-        private const val MSG_MIC_REQUEST = 32773
-        private const val MSG_MIC_RESPONSE = 32774
     }
 }

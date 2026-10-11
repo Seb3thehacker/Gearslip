@@ -116,9 +116,9 @@ class ServiceDiscoveryAudioTest {
     }
 
     @Test
-    fun `with only an AAC media sink, that one is used`() {
+    fun `with only an AAC media sink, PCM stays on the phone`() {
         val aacOnly = audioSink(id = 3, codec = 4, audioType = 3, config = audioConfig(48_000, 16, 2))
-        assertEquals(3, ServiceDiscovery.pickMediaSink(ServiceDiscovery.findAudioServices(aacOnly))!!.serviceId)
+        assertNull(ServiceDiscovery.pickMediaSink(ServiceDiscovery.findAudioServices(aacOnly)))
     }
 
     @Test
@@ -126,4 +126,15 @@ class ServiceDiscoveryAudioTest {
         val guidanceOnly = audioSink(id = 6, codec = 1, audioType = 1, config = audioConfig(16_000, 16, 1))
         assertNull(ServiceDiscovery.pickMediaSink(ServiceDiscovery.findAudioServices(guidanceOnly)))
     }
+    @Test fun `missing PCM configuration fields are not invented`() {
+        val response = audioSink(5, 1, 3, byteArrayOf())
+        assertNull(ServiceDiscovery.pickMediaSink(ServiceDiscovery.findAudioServices(response)))
+    }
+
+    @Test fun `omitted video codec uses the DHU H264 default`() {
+        val config = varintField(1, 1) + varintField(2, 2) + varintField(5, 160)
+        val response = lenField(1, varintField(1, 2) + lenField(3, lenField(4, config)))
+        assertEquals(3, ServiceDiscovery.findVideoService(response)!!.codecType)
+    }
+
 }

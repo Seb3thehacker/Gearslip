@@ -1,5 +1,6 @@
 package app.seb3thehacker.gearslip
 
+import java.io.ByteArrayOutputStream
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.security.KeyStore
@@ -11,6 +12,7 @@ import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 import javax.net.ssl.SSLEngineResult.HandshakeStatus
 import javax.net.ssl.SSLPeerUnverifiedException
+import javax.net.ssl.SSLException
 import javax.net.ssl.X509ExtendedTrustManager
 
 /**
@@ -36,7 +38,7 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
     private var appBuffer = ByteBuffer.allocate(32 * 1024)
     private var netBuffer = ByteBuffer.allocate(32 * 1024)
 
-    var handshakeComplete: Boolean = false
+    @Volatile var handshakeComplete: Boolean = false
         private set
 
     init {
@@ -88,7 +90,7 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
                     if (netBuffer.hasRemaining()) {
                         outgoing += ByteArray(netBuffer.remaining()).also { netBuffer.get(it) }
                     }
-                    if (result.status == SSLEngineResult.Status.CLOSED) break@loop
+                    if (result.status == SSLEngineResult.Status.CLOSED) throw SSLException("TLS closed during handshake")
                 }
 
                 HandshakeStatus.NEED_UNWRAP -> {
@@ -100,7 +102,7 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
                             appBuffer = ByteBuffer.allocate(appBuffer.capacity() * 2)
                             continue@loop
                         }
-                        SSLEngineResult.Status.CLOSED -> break@loop
+                        SSLEngineResult.Status.CLOSED -> throw SSLException("TLS closed during handshake")
                         else -> Unit
                     }
                 }
@@ -124,13 +126,16 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
     /** Wraps a control-channel payload for an ENCRYPTED frame. */
     fun encrypt(plain: ByteArray): ByteArray {
         val source = ByteBuffer.wrap(plain)
-        val out = java.io.ByteArrayOutputStream()
+        val out = ByteArrayOutputStream()
         while (source.hasRemaining()) {
             netBuffer.clear()
             val result = engine.wrap(source, netBuffer)
             if (result.status == SSLEngineResult.Status.BUFFER_OVERFLOW) {
                 netBuffer = ByteBuffer.allocate(netBuffer.capacity() * 2)
                 continue
+            }
+            if (result.status != SSLEngineResult.Status.OK || result.bytesConsumed() == 0) {
+                throw SSLException("TLS could not encrypt application data: ${result.status}")
             }
             netBuffer.flip()
             val chunk = ByteArray(netBuffer.remaining())
@@ -147,7 +152,7 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
      */
     fun decrypt(cipher: ByteArray): ByteArray {
         val source = ByteBuffer.wrap(cipher)
-        val out = java.io.ByteArrayOutputStream()
+        val out = ByteArrayOutputStream()
         while (source.hasRemaining()) {
             appBuffer.clear()
             val result = engine.unwrap(source, appBuffer)
@@ -157,10 +162,9 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
                     continue
                 }
                 SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
-                    log.w("decrypt: record split across frames (${source.remaining()} bytes left over)")
-                    break
+                    throw SSLException("Incomplete TLS record in an encrypted frame")
                 }
-                SSLEngineResult.Status.CLOSED -> break
+                SSLEngineResult.Status.CLOSED -> throw SSLException("TLS peer closed the connection")
                 else -> Unit
             }
             appBuffer.flip()
