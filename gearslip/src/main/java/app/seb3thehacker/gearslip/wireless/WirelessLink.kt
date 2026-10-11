@@ -3,6 +3,7 @@ package app.seb3thehacker.gearslip.wireless
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.net.ConnectivityManager
@@ -19,7 +20,9 @@ import app.seb3thehacker.gearslip.Wire
 import java.io.DataInputStream
 import java.io.IOException
 import java.io.OutputStream
+import java.net.ConnectException
 import java.net.InetSocketAddress
+import java.net.SocketTimeoutException
 import java.net.Socket
 import java.util.UUID
 
@@ -258,7 +261,7 @@ object WirelessLink {
                     send(output, MSG_CONNECTION_STATUS, Protobuf.varintField(1, STATUS_SUCCESS))
                     log.i("-> StartResponse (phone at $phoneIp), ConnectionStatus: success")
                 }.onFailure { log.w("Bluetooth: couldn't report the Wi-Fi join (${it.message})") }
-                Thread({ connectTcp(output, name, net, ip, port) }, "gearslip-wireless-tcp").start()
+                Thread({ connectTcp(context, output, name, net, ip, port) }, "gearslip-wireless-tcp").start()
             }
 
             override fun onUnavailable() {
@@ -280,7 +283,45 @@ object WirelessLink {
         manager.requestNetwork(request, callback, WIFI_WAIT_MS)
     }
 
-    private fun connectTcp(output: OutputStream, name: String, net: Network, ip: String, port: Int) {
+    /**
+     * Run once when the first TCP try fails, to tell "the car ignores us" from "wrong port". A
+     * refused port answers at once, so it proves the car is reachable; a timeout on every port
+     * means the car drops the phone's traffic, usually because it is still waiting for a step.
+     */
+    @SuppressLint("MissingPermission")
+    private fun probe(context: Context, net: Network, ip: String, port: Int) {
+        runCatching {
+            val manager = context.getSystemService(ConnectivityManager::class.java)
+            val link = manager?.getLinkProperties(net)
+            log.i("probe: phone ${link?.linkAddresses?.joinToString()} on ${link?.interfaceName}, routes ${link?.routes?.joinToString()}")
+            val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter
+            val calls = adapter?.getProfileConnectionState(BluetoothProfile.HEADSET)
+            val audio = adapter?.getProfileConnectionState(BluetoothProfile.A2DP)
+            log.i("probe: Bluetooth (any device) calls ${profileState(calls)}, media audio ${profileState(audio)}")
+        }.onFailure { log.w("probe: couldn't read the link (${it.message})") }
+        for (p in listOf(port, 5288, 5277, 80, 443).distinct()) {
+            val result = try {
+                net.socketFactory.createSocket().use { it.connect(InetSocketAddress(ip, p), 1_500) }
+                "open"
+            } catch (e: SocketTimeoutException) {
+                "no answer"
+            } catch (e: ConnectException) {
+                if (e.message?.contains("ECONNREFUSED") == true) "refused (car is reachable)" else "failed: ${e.message}"
+            } catch (e: Exception) {
+                "failed: ${e.javaClass.simpleName} ${e.message}"
+            }
+            log.i("probe: $ip:$p $result")
+        }
+    }
+
+    private fun profileState(state: Int?) = when (state) {
+        BluetoothProfile.STATE_CONNECTED -> "connected"
+        BluetoothProfile.STATE_CONNECTING -> "connecting"
+        BluetoothProfile.STATE_DISCONNECTED -> "not connected"
+        else -> "unknown"
+    }
+
+    private fun connectTcp(context: Context, output: OutputStream, name: String, net: Network, ip: String, port: Int) {
         SessionStatus.connecting("Wi-Fi: reaching $name")
         var last: Exception? = null
         repeat(TCP_TRIES) { attempt ->
@@ -301,6 +342,7 @@ object WirelessLink {
             } catch (e: Exception) {
                 last = e
                 log.w("TCP: try ${attempt + 1} to $ip:$port failed: ${e.message}")
+                if (attempt == 0) probe(context, net, ip, port)
                 Thread.sleep(1_000)
             }
         }
