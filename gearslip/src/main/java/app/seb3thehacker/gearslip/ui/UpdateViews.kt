@@ -14,6 +14,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -130,19 +131,38 @@ internal fun UpdateRow() {
     )
 }
 
-/** Whether a drive's end may notify about a new version. */
+/** Whether Gearslip checks for updates on its own. */
 @Composable
-internal fun UpdateNotifyRow() {
+internal fun UpdateAutoRow() {
     val context = LocalContext.current
-    var on by remember { mutableStateOf(UpdateChecker.notifyEnabled(context)) }
+    var on by remember { mutableStateOf(UpdateChecker.autoCheckEnabled(context)) }
     SettingsRow(
-        "Update notifications",
+        "Check automatically",
         Modifier.toggleable(on, role = Role.Switch) {
             on = it
-            UpdateChecker.setNotifyEnabled(context, it)
+            UpdateChecker.setAutoCheckEnabled(context, it)
         },
-        subtitle = "On the car screen when you plug in, and on the phone after a drive",
+        subtitle = if (BuildConfig.DEBUG) "Does nothing in dev builds. They check only when you tap Check for updates"
+        else if (on) "Once a day, with a note on the car screen and the phone when one is out"
+        else "Gearslip checks only when you tap Check for updates",
         icon = Icons.Filled.Notifications,
+        trailing = { Switch(checked = on, onCheckedChange = null) },
+    )
+}
+
+/** Whether pre-releases count as updates. */
+@Composable
+internal fun UpdateBetaRow() {
+    val context = LocalContext.current
+    var on by remember { mutableStateOf(UpdateChecker.betaEnabled(context)) }
+    SettingsRow(
+        "Beta updates",
+        Modifier.toggleable(on, role = Role.Switch) {
+            on = it
+            UpdateChecker.setBetaEnabled(context, it)
+        },
+        subtitle = "Get test versions before they're released. They may have more bugs.",
+        icon = Icons.Filled.Build,
         trailing = { Switch(checked = on, onCheckedChange = null) },
     )
 }

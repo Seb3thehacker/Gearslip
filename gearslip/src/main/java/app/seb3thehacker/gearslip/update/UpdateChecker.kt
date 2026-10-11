@@ -32,8 +32,10 @@ import java.security.MessageDigest
 /**
  * Looks for a newer Gearslip on GitHub and installs it through Android's own installer.
  *
- * Only GitHub's "latest" release counts, which leaves out pre-releases and drafts. The app checks
- * at most once a day: when it opens, and when a drive ends. After a drive a new version also gets
+ * Only GitHub's "latest" release counts, which leaves out pre-releases and drafts, unless the
+ * driver opted into betas: then pre-releases count too. The app checks at most once a day: when
+ * it opens, and when a drive ends. With automatic checks off it never asks GitHub on its own,
+ * only when the driver taps Check for updates. After a drive a new version also gets
  * a notification, once per version, since the driver is parked and the app is likely closed. The
  * car screen shows the same news once per version, at plug-in and only while parked.
  * Nothing runs in the background otherwise, and nothing else is sent: the request is the same one
@@ -62,7 +64,9 @@ object UpdateChecker {
     private const val PREFS = "updates"
     private const val KEY_CHECKED_AT = "checked_at"
     private const val KEY_FOUND = "found"
-    private const val KEY_NOTIFY = "notify"
+    /** Named for the notifications toggle it grew out of; it now covers every automatic check. */
+    private const val KEY_AUTO = "notify"
+    private const val KEY_BETA = "beta"
     private const val KEY_NOTIFIED = "notified_version"
     private const val KEY_CAR_NOTIFIED = "car_notified_version"
     /** Lets the car screen settle after plug-in, so the card isn't lost behind the first frames. */
@@ -71,22 +75,43 @@ object UpdateChecker {
     private const val NOTIFICATION_ID = 4100
     private const val DAY_MS = 24 * 60 * 60 * 1000L
     private const val LATEST = "https://api.github.com/repos/Seb3thehacker/gearslip/releases/latest"
+    /** Newest first, pre-releases included. Ten covers any run of betas between two releases. */
+    private const val ALL = "https://api.github.com/repos/Seb3thehacker/gearslip/releases?per_page=10"
 
     /** Set when the driver tapped Install but first had to allow installs from Gearslip. */
     @Volatile private var installWhenAllowed = false
 
     private fun prefs(context: Context) = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** Whether a drive's end may post a notification about a new version. On by default: it sends nothing. */
-    fun notifyEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_NOTIFY, true)
+    /**
+     * Whether Gearslip checks on its own, and tells the driver what it finds on the phone and the
+     * car screen. On by default: the check sends nothing about the phone.
+     */
+    fun autoCheckEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_AUTO, true)
 
-    fun setNotifyEnabled(context: Context, on: Boolean) {
-        prefs(context).edit().putBoolean(KEY_NOTIFY, on).apply()
+    fun setAutoCheckEnabled(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_AUTO, on).apply()
         if (!on) NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
     }
 
+    /** Whether GitHub pre-releases count as updates. */
+    fun betaEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_BETA, false)
+
+    /**
+     * Switching channels forgets what the old one found: a beta found earlier shouldn't still be
+     * offered once betas are off. Checks again right away if automatic checks are on.
+     */
+    fun setBetaEnabled(context: Context, on: Boolean) {
+        prefs(context).edit().putBoolean(KEY_BETA, on).remove(KEY_FOUND).remove(KEY_CHECKED_AT).apply()
+        val current = flow.value
+        if (current is State.Checking || current is State.Downloading) return
+        updatesDir(context).deleteRecursively()
+        flow.value = State.Idle
+        if (autoCheckEnabled(context) && !BuildConfig.DEBUG) check(context)
+    }
+
     private fun dueForCheck(context: Context) =
-        !BuildConfig.DEBUG && System.currentTimeMillis() - prefs(context).getLong(KEY_CHECKED_AT, 0) >= DAY_MS
+        !BuildConfig.DEBUG && autoCheckEnabled(context) && System.currentTimeMillis() - prefs(context).getLong(KEY_CHECKED_AT, 0) >= DAY_MS
 
     /** Gearslip came to the front: check if a day has passed, and finish an install that waited on permission. */
     fun onAppOpened(context: Context) {
@@ -107,7 +132,7 @@ object UpdateChecker {
      * notification for a new version they haven't been told about yet.
      */
     fun onDriveEnded(context: Context) {
-        if (!notifyEnabled(context)) return
+        if (!autoCheckEnabled(context)) return
         val app = context.applicationContext
         Thread({
             val current = flow.value
@@ -126,7 +151,7 @@ object UpdateChecker {
      * once per version. Skipped while moving; the next plug-in tries again.
      */
     fun onCarConnected(context: Context) {
-        if (!notifyEnabled(context)) return
+        if (!autoCheckEnabled(context)) return
         val app = context.applicationContext
         Thread({
             val current = flow.value
@@ -197,7 +222,7 @@ object UpdateChecker {
         Thread({ flow.value = checkNow(app) }, "gearslip-update").start()
     }
 
-    private fun checkNow(app: Context): State = runCatching { fetchLatest() }.fold(
+    private fun checkNow(app: Context): State = runCatching { fetchNewest(betaEnabled(app)) }.fold(
         onSuccess = { release ->
             prefs(app).edit().putLong(KEY_CHECKED_AT, System.currentTimeMillis()).apply()
             if (release != null && isNewer(release.version, BuildConfig.VERSION_NAME)) {
@@ -263,8 +288,9 @@ object UpdateChecker {
         )
     }
 
-    private fun fetchLatest(): Release? {
-        val conn = (URL(LATEST).openConnection() as HttpURLConnection).apply {
+    /** The newest release with an APK: the "latest" one, or with [beta] the newest of any kind but drafts. */
+    private fun fetchNewest(beta: Boolean): Release? {
+        val conn = (URL(if (beta) ALL else LATEST).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 15_000
             setRequestProperty("Accept", "application/vnd.github+json")
@@ -273,21 +299,31 @@ object UpdateChecker {
         try {
             if (conn.responseCode == 404) return null // no stable release yet
             if (conn.responseCode !in 200..299) error("GitHub answered ${conn.responseCode}")
-            val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-            val assets = json.optJSONArray("assets") ?: return null
-            val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
-                .firstOrNull { it.optString("name").endsWith(".apk") && !it.optString("name").contains("debug") }
-                ?: return null
-            return Release(
-                version = json.getString("tag_name").removePrefix("v"),
-                apkUrl = apk.getString("browser_download_url"),
-                size = apk.optLong("size", -1),
-                sha256 = apk.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:"),
-                pageUrl = json.optString("html_url"),
-            )
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            if (!beta) return release(JSONObject(body))
+            val list = org.json.JSONArray(body)
+            return (0 until list.length()).map { list.getJSONObject(it) }
+                .filterNot { it.optBoolean("draft") }
+                .mapNotNull(::release)
+                .reduceOrNull { best, next -> if (isNewer(next.version, best.version)) next else best }
         } finally {
             conn.disconnect()
         }
+    }
+
+    /** A release as GitHub lists it, or null when it has no APK attached. */
+    private fun release(json: JSONObject): Release? {
+        val assets = json.optJSONArray("assets") ?: return null
+        val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
+            .firstOrNull { it.optString("name").endsWith(".apk") && !it.optString("name").contains("debug") }
+            ?: return null
+        return Release(
+            version = json.getString("tag_name").removePrefix("v"),
+            apkUrl = apk.getString("browser_download_url"),
+            size = apk.optLong("size", -1),
+            sha256 = apk.optString("digest").takeIf { it.startsWith("sha256:") }?.removePrefix("sha256:"),
+            pageUrl = json.optString("html_url"),
+        )
     }
 
     private fun fetchApk(release: Release, into: File) {

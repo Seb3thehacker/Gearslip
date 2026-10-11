@@ -137,7 +137,9 @@ private fun AboutSection(onOpenWhatsNew: () -> Unit, onReplayTutorial: () -> Uni
         SettingsDivider()
         UpdateRow()
         SettingsDivider()
-        UpdateNotifyRow()
+        UpdateAutoRow()
+        SettingsDivider()
+        UpdateBetaRow()
         SettingsDivider()
         SettingsRow(
             "Replay the setup guide",
