@@ -117,6 +117,7 @@ object Protobuf {
         var pos = start
         while (pos < data.size && shift <= 63) {
             val b = data[pos].toInt() and 0xFF
+            if (shift == 63 && b > 1) return null
             result = result or ((b and 0x7F).toLong() shl shift)
             pos++
             if (b and 0x80 == 0) return result to pos
@@ -168,12 +169,33 @@ object Wire {
     fun allBytes(fields: List<Field>, number: Int): List<ByteArray> =
         fields.filter { it.number == number && it.wireType == 2 }.mapNotNull { it.bytes }
 
+    /** Protobuf readers accept both packed and unpacked repeated numeric fields. */
+    fun repeatedInts(fields: List<Field>, number: Int): List<Int> =
+        repeatedLongs(fields, number)?.map(Long::toInt).orEmpty()
+
+    /** Null means a packed field contained an incomplete or overflowing varint. */
+    fun repeatedLongs(fields: List<Field>, number: Int): List<Long>? = buildList {
+        for (field in fields.filter { it.number == number }) {
+            if (field.wireType == 0) add(field.varint)
+            else if (field.wireType == 2) {
+                val bytes = field.bytes ?: continue
+                var position = 0
+                while (position < bytes.size) {
+                    val (value, next) = readVarint(bytes, position) ?: return null
+                    add(value)
+                    position = next
+                }
+            }
+        }
+    }
+
     private fun readVarint(data: ByteArray, start: Int): Pair<Long, Int>? {
         var result = 0L
         var shift = 0
         var pos = start
         while (pos < data.size && shift <= 63) {
             val b = data[pos].toInt() and 0xFF
+            if (shift == 63 && b > 1) return null
             result = result or ((b and 0x7F).toLong() shl shift)
             pos++
             if (b and 0x80 == 0) return result to pos

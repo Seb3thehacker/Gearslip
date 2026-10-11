@@ -104,7 +104,7 @@ class CryptoTest {
 
         val video = ServiceDiscovery.findVideoService(response)!!
         assertEquals(1, video.serviceId)
-        assertEquals("VIDEO_H264_BP", video.codecName)
+        assertTrue(video.configs.all { it.codecType == ServiceDiscovery.CODEC_H264_BP })
         assertEquals(2, video.configs.size)
         assertEquals("1280x720", video.configs[0].resolutionName)
         assertEquals("30fps", video.configs[0].frameRateName)
