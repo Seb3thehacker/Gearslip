@@ -102,6 +102,10 @@ android {
     testOptions {
         // GearslipLog calls android.util.Log, which is a stub on the local JVM.
         unitTests.isReturnDefaultValues = true
+        unitTests.all {
+            // Opt-in live repository tests; private keys stay in memory and are never test assets.
+            it.systemProperty("gearslip.liveCertificates", providers.gradleProperty("gearslipLiveCertificates").getOrElse("false"))
+        }
     }
 
 }
@@ -140,6 +144,7 @@ dependencies {
     implementation(libs.androidx.car.app.projected)
     implementation(libs.androidx.media)
     testImplementation(libs.junit)
+    testImplementation(libs.json) // Android's JSON API for local downloader tests.
 }
 
 tasks.withType<KotlinJvmCompile>().configureEach {

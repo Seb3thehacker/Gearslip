@@ -16,11 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,8 +34,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.seb3thehacker.gearslip.AppSettings
 import app.seb3thehacker.gearslip.BuildConfig
-import app.seb3thehacker.gearslip.CertProvider
 import app.seb3thehacker.gearslip.stats.UsageStats
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private enum class Screen { HOME, LOGS, SETTINGS, CAR_PREVIEW, CERT_SETUP, SETUP_GUIDE, USAGE_NOTES, HELP, WHATS_NEW, RECOMMENDED_APPS }
 
@@ -46,7 +45,7 @@ private enum class Screen { HOME, LOGS, SETTINGS, CAR_PREVIEW, CERT_SETUP, SETUP
 fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
     val context = LocalContext.current
     val needsCertSetup = remember {
-        !AppSettings.hasSkippedCertSetup(context) && !CertProvider.hasAnyCert(context)
+        !AppSettings.hasCompletedCertificateSetup(context)
     }
     val needsSetupGuide = remember { !AppSettings.hasSeenPermissionsSetup(context) }
     var screen by rememberSaveable {
@@ -79,7 +78,7 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
     // Reads the certificate once in the background, so Settings has it ready when opened.
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { runCatching { CertSummary.read(context) } }
+        withContext(Dispatchers.Default) { runCatching { CertSummary.read(context) } }
     }
     LaunchedEffect(Unit) {
         if (!needsSetupGuide &&
@@ -110,6 +109,7 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
                 Screen.WHATS_NEW -> WhatsNewScreen(onBack = { screen = Screen.SETTINGS })
                 Screen.LOGS -> LogsScreen(onBack = { screen = Screen.HOME })
                 Screen.SETTINGS -> SettingsScreen(
+                    onCertificateSetup = { screen = Screen.CERT_SETUP },
                     onBack = { screen = Screen.HOME },
                     onOpenRecommendedApps = { settingsAtUsageNotes = false; screen = Screen.RECOMMENDED_APPS },
                     onOpenWhatsNew = { settingsAtUsageNotes = false; screen = Screen.WHATS_NEW },
@@ -124,6 +124,7 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
                 )
                 Screen.CERT_SETUP -> CertSetupScreen(
                     onDone = {
+                        AppSettings.setCompletedCertificateSetup(context)
                         screen = if (AppSettings.hasSeenPermissionsSetup(context)) Screen.HOME else Screen.SETUP_GUIDE
                     },
                 )
@@ -142,7 +143,7 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
         if (screen != Screen.CAR_PREVIEW) PhoneTypingBar()
     }
 
-    CompatWarning()
+    if (screen == Screen.HOME) CompatWarning(onOpenSettings = { settingsAtUsageNotes = false; screen = Screen.SETTINGS })
 }
 
 /**
@@ -165,31 +166,5 @@ private fun DevBuildBanner() {
                 fontWeight = FontWeight.Bold,
             )
         }
-    }
-}
-
-/** Shown once, on first run: the certificate is known to fail on head units newer than ~2020. */
-@Composable
-private fun CompatWarning() {
-    val context = LocalContext.current
-    var visible by rememberSaveable { mutableStateOf(!AppSettings.hasSeenCompatWarning(context)) }
-
-    if (visible) {
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text("Before you plug in") },
-            text = {
-                Text(
-                    "Gearslip works with cars built before 2020. " +
-                        "Newer firmware often blocks the connection.",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    AppSettings.setSeenCompatWarning(context)
-                    visible = false
-                }) { Text("Got it") }
-            },
-        )
     }
 }
