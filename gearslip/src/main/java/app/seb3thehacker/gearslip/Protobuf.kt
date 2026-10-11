@@ -2,14 +2,7 @@ package app.seb3thehacker.gearslip
 
 import java.io.ByteArrayOutputStream
 
-/**
- * Just enough protobuf to run the spike, hand-rolled so there is no protoc step.
- *
- * Only three messages are ever written (AuthResponse is only read):
- *   ServiceDiscoveryRequest { optional string label_text = 4; optional string device_name = 5; }
- *   PingResponse            { required int64 timestamp = 1; }
- *   AuthResponse            { required int32 status = 1; }
- */
+/** Protobuf field encoding and diagnostic rendering for the projection protocol. */
 object Protobuf {
 
     fun varint(value: Long): ByteArray {
@@ -41,29 +34,7 @@ object Protobuf {
     fun readInt32Field(data: ByteArray, field: Int): Int? = readInt64Field(data, field)?.toInt()
 
     /** Reads a varint field whole, for int64s such as a ping's timestamp. */
-    fun readInt64Field(data: ByteArray, field: Int): Long? {
-        var pos = 0
-        while (pos < data.size) {
-            val (tag, afterTag) = readVarint(data, pos) ?: return null
-            pos = afterTag
-            val number = (tag ushr 3).toInt()
-            when ((tag and 7L).toInt()) {
-                0 -> {
-                    val (value, afterValue) = readVarint(data, pos) ?: return null
-                    pos = afterValue
-                    if (number == field) return value
-                }
-                2 -> {
-                    val (len, afterLen) = readVarint(data, pos) ?: return null
-                    pos = afterLen + len.toInt()
-                }
-                5 -> pos += 4
-                1 -> pos += 8
-                else -> return null
-            }
-        }
-        return null
-    }
+    fun readInt64Field(data: ByteArray, field: Int): Long? = Wire.varint(Wire.fields(data), field)
 
     /**
      * Shallow field dump. Used on ServiceDiscoveryResponse: its make/model/year strings
@@ -71,6 +42,7 @@ object Protobuf {
      * proof that the session is live and we are decrypting correctly.
      */
     fun describe(data: ByteArray, indent: String = "  "): String {
+        if (indent.length > 32) return "$indent(nested message)\n"
         val sb = StringBuilder()
         var pos = 0
         while (pos < data.size) {
@@ -89,6 +61,7 @@ object Protobuf {
                 }
                 2 -> {
                     val (len, afterLen) = readVarint(data, pos) ?: break
+                    if (len < 0 || len > data.size - afterLen) break
                     val end = afterLen + len.toInt()
                     if (end > data.size) break
                     val body = data.copyOfRange(afterLen, end)
@@ -117,6 +90,7 @@ object Protobuf {
         var pos = start
         while (pos < data.size && shift <= 63) {
             val b = data[pos].toInt() and 0xFF
+            if (shift == 63 && b > 1) return null
             result = result or ((b and 0x7F).toLong() shl shift)
             pos++
             if (b and 0x80 == 0) return result to pos
@@ -135,35 +109,37 @@ object Wire {
         val out = mutableListOf<Field>()
         var pos = 0
         while (pos < data.size) {
-            val tag = readVarint(data, pos) ?: break
+            val tag = readVarint(data, pos) ?: return emptyList()
             pos = tag.second
             val number = (tag.first ushr 3).toInt()
+            if (tag.first ushr 3 !in 1..0x1fff_ffffL) return emptyList()
             when ((tag.first and 7L).toInt()) {
                 0 -> {
-                    val v = readVarint(data, pos) ?: break
+                    val v = readVarint(data, pos) ?: return emptyList()
                     pos = v.second
                     out += Field(number, 0, v.first, null)
                 }
-                1 -> { if (pos + 8 > data.size) break; pos += 8 }
+                1 -> { if (data.size - pos < 8) return emptyList(); pos += 8 }
                 2 -> {
-                    val len = readVarint(data, pos) ?: break
+                    val len = readVarint(data, pos) ?: return emptyList()
+                    if (len.first < 0 || len.first > data.size - len.second) return emptyList()
                     val end = len.second + len.first.toInt()
-                    if (end > data.size || end < len.second) break
+                    if (end > data.size || end < len.second) return emptyList()
                     out += Field(number, 2, 0, data.copyOfRange(len.second, end))
                     pos = end
                 }
-                5 -> { if (pos + 4 > data.size) break; pos += 4 }
-                else -> break
+                5 -> { if (data.size - pos < 4) return emptyList(); pos += 4 }
+                else -> return emptyList()
             }
         }
         return out
     }
 
     fun varint(fields: List<Field>, number: Int): Long? =
-        fields.firstOrNull { it.number == number && it.wireType == 0 }?.varint
+        fields.lastOrNull { it.number == number && it.wireType == 0 }?.varint
 
     fun bytes(fields: List<Field>, number: Int): ByteArray? =
-        fields.firstOrNull { it.number == number && it.wireType == 2 }?.bytes
+        fields.lastOrNull { it.number == number && it.wireType == 2 }?.bytes
 
     fun allBytes(fields: List<Field>, number: Int): List<ByteArray> =
         fields.filter { it.number == number && it.wireType == 2 }.mapNotNull { it.bytes }
@@ -174,6 +150,7 @@ object Wire {
         var pos = start
         while (pos < data.size && shift <= 63) {
             val b = data[pos].toInt() and 0xFF
+            if (shift == 63 && b > 1) return null
             result = result or ((b and 0x7F).toLong() shl shift)
             pos++
             if (b and 0x80 == 0) return result to pos

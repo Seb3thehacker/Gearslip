@@ -1,5 +1,6 @@
 package app.seb3thehacker.gearslip
 
+import java.io.ByteArrayOutputStream
 import java.net.Socket
 import java.nio.ByteBuffer
 import java.security.KeyStore
@@ -11,23 +12,10 @@ import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 import javax.net.ssl.SSLEngineResult.HandshakeStatus
 import javax.net.ssl.SSLPeerUnverifiedException
+import javax.net.ssl.SSLException
 import javax.net.ssl.X509ExtendedTrustManager
 
-/**
- * The phone end of the Android Auto TLS session.
- *
- * Two things here are the opposite of what aasdk does, because aasdk implements the head
- * unit and the head unit is the TLS *client*: it calls TLS_client_method() and
- * SSL_set_connect_state (src/Transport/SSLWrapper.cpp:97-140, src/Messenger/Cryptor.cpp:87),
- * and SSL_set_accept_state appears nowhere in that codebase. So the phone is the TLS
- * **server** and its certificate goes out as the server certificate - sent unconditionally
- * on every handshake, which is precisely what we are testing.
- *
- * TLS here is not layered over the socket: handshake bytes travel inside
- * MESSAGE_ENCAPSULATED_SSL control messages (id 3). That rules out SSLSocket and makes
- * SSLEngine - a buffer-to-buffer engine, the JSSE counterpart of aasdk's memory BIO pair -
- * the right tool.
- */
+/** TLS server for projection. Handshake records travel in control message 3, not a TLS socket. */
 class PhoneTls(keyStore: KeyStore, password: CharArray) {
     private val log = GearslipLog.tagged("TLS")
 
@@ -36,7 +24,7 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
     private var appBuffer = ByteBuffer.allocate(32 * 1024)
     private var netBuffer = ByteBuffer.allocate(32 * 1024)
 
-    var handshakeComplete: Boolean = false
+    @Volatile var handshakeComplete: Boolean = false
         private set
 
     init {
@@ -50,10 +38,9 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
 
         engine = context.createSSLEngine().apply {
             useClientMode = false
-            // want, not need: we ask the head unit for its certificate so the run also tells
-            // us what real units present, but we never make the session depend on getting one.
-            wantClientAuth = true
-            enabledProtocols = arrayOf("TLSv1.2") // aasdk pins TLS 1.2
+            // Android Auto's phone endpoint requires the head unit to present a certificate.
+            needClientAuth = true
+            enabledProtocols = arrayOf("TLSv1.2")
         }
         engine.beginHandshake()
     }
@@ -88,7 +75,7 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
                     if (netBuffer.hasRemaining()) {
                         outgoing += ByteArray(netBuffer.remaining()).also { netBuffer.get(it) }
                     }
-                    if (result.status == SSLEngineResult.Status.CLOSED) break@loop
+                    if (result.status == SSLEngineResult.Status.CLOSED) throw SSLException("TLS closed during handshake")
                 }
 
                 HandshakeStatus.NEED_UNWRAP -> {
@@ -100,7 +87,7 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
                             appBuffer = ByteBuffer.allocate(appBuffer.capacity() * 2)
                             continue@loop
                         }
-                        SSLEngineResult.Status.CLOSED -> break@loop
+                        SSLEngineResult.Status.CLOSED -> throw SSLException("TLS closed during handshake")
                         else -> Unit
                     }
                 }
@@ -124,13 +111,16 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
     /** Wraps a control-channel payload for an ENCRYPTED frame. */
     fun encrypt(plain: ByteArray): ByteArray {
         val source = ByteBuffer.wrap(plain)
-        val out = java.io.ByteArrayOutputStream()
+        val out = ByteArrayOutputStream()
         while (source.hasRemaining()) {
             netBuffer.clear()
             val result = engine.wrap(source, netBuffer)
             if (result.status == SSLEngineResult.Status.BUFFER_OVERFLOW) {
                 netBuffer = ByteBuffer.allocate(netBuffer.capacity() * 2)
                 continue
+            }
+            if (result.status != SSLEngineResult.Status.OK || result.bytesConsumed() == 0) {
+                throw SSLException("TLS could not encrypt application data: ${result.status}")
             }
             netBuffer.flip()
             val chunk = ByteArray(netBuffer.remaining())
@@ -140,14 +130,10 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
         return out.toByteArray()
     }
 
-    /**
-     * Unwraps one ENCRYPTED frame's payload. aasdk decrypts per frame
-     * (MessageOutStream::compoundFrame encrypts per frame), so each frame's payload is
-     * self-contained ciphertext.
-     */
+    /** Each encrypted projection frame contains complete TLS records. */
     fun decrypt(cipher: ByteArray): ByteArray {
         val source = ByteBuffer.wrap(cipher)
-        val out = java.io.ByteArrayOutputStream()
+        val out = ByteArrayOutputStream()
         while (source.hasRemaining()) {
             appBuffer.clear()
             val result = engine.unwrap(source, appBuffer)
@@ -157,10 +143,9 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
                     continue
                 }
                 SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
-                    log.w("decrypt: record split across frames (${source.remaining()} bytes left over)")
-                    break
+                    throw SSLException("Incomplete TLS record in an encrypted frame")
                 }
-                SSLEngineResult.Status.CLOSED -> break
+                SSLEngineResult.Status.CLOSED -> throw SSLException("TLS peer closed the connection")
                 else -> Unit
             }
             appBuffer.flip()
@@ -187,7 +172,7 @@ class PhoneTls(keyStore: KeyStore, password: CharArray) {
                 }
             }
         } catch (_: SSLPeerUnverifiedException) {
-            log.i("head unit presented NO certificate (we asked but did not require one)")
+            log.i("head unit peer certificate is unavailable")
         }
     }
 

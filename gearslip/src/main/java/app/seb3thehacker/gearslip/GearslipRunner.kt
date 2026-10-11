@@ -11,9 +11,13 @@ import app.seb3thehacker.gearslip.car.CarKeys
 import app.seb3thehacker.gearslip.car.CarSensors
 import app.seb3thehacker.gearslip.car.CarServices
 import app.seb3thehacker.gearslip.car.CarSettings
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.TimeUnit
 
 /**
  * Drives the phone side of the control-channel handshake far enough to answer one question:
@@ -45,11 +49,12 @@ class GearslipRunner(
     private lateinit var identityTask: FutureTask<PhoneTls>
 
     /** Sends every message, in order, so no other thread ever blocks on the USB link. See [send]. */
-    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "gearslip-writer") }
+    private val writer = Executors.newSingleThreadExecutor { Thread(it, "gearslip-writer") }
 
     /** Waits for the certificate only when TLS is first needed; see [run]. */
     private val tls: PhoneTls by lazy { identityTask.get() }
     private var authenticationFailed = false
+    private var drainWriterOnExit = false
     @Volatile private var stopped = false
 
     @Volatile private var state = State.WAIT_VERSION
@@ -133,6 +138,8 @@ class GearslipRunner(
             reportDisconnect()
         } finally {
             running = false
+            writer.shutdown()
+            if (drainWriterOnExit) writer.awaitTermination(2, TimeUnit.SECONDS)
             writer.shutdownNow()
             log.flush()
         }
@@ -163,7 +170,7 @@ class GearslipRunner(
 
     private fun handleFrame(frame: Frames.Frame) {
         // A rejected handshake cannot consume later messages as if authentication succeeded.
-        if (authenticationFailed || stopped) return
+        if (authenticationFailed || stopped || !running) return
         val payload = if (frame.encrypted) {
             if (!tls.handshakeComplete) {
                 log.w("encrypted frame arrived before the handshake finished - ignoring")
@@ -174,7 +181,10 @@ class GearslipRunner(
             frame.payload
         }
 
-        val message = assembler.offer(frame, payload) ?: return
+        val message = if (frame.messageType == Frames.MESSAGE_CONTROL) {
+            if (frame.frameType != Frames.TYPE_BULK) throw IOException("Fragmented channel control message")
+            payload
+        } else assembler.offer(frame, payload) ?: return
         if (message.size < 2) {
             log.w("runt message on channel ${frame.channel}")
             return
@@ -186,6 +196,7 @@ class GearslipRunner(
         lastProgress = System.currentTimeMillis()
 
         if (frame.channel != Frames.CHANNEL_CONTROL) {
+            if (state != State.DONE || !frame.encrypted) return
             if (frame.channel == videoChannelId) {
                 onVideoMessage(messageId, body)
             } else if (frame.channel == inputChannelId) {
@@ -215,6 +226,9 @@ class GearslipRunner(
             }
             return
         }
+        if (messageId !in setOf(MSG_VERSION_REQUEST, MSG_ENCAPSULATED_SSL, MSG_AUTH_COMPLETE,
+                MSG_BYEBYE_REQUEST, MSG_UNEXPECTED_MESSAGE, MSG_FRAMING_ERROR) &&
+            (!frame.encrypted || state != State.DONE && state != State.WAIT_SDR)) return
 
         when (messageId) {
             MSG_VERSION_REQUEST -> onVersionRequest(body)
@@ -223,9 +237,18 @@ class GearslipRunner(
             MSG_SERVICE_DISCOVERY_RESPONSE -> onServiceDiscoveryResponse(body)
             MSG_PING_REQUEST -> onPingRequest(body)
             MSG_BYEBYE_REQUEST -> onByeByeRequest(body)
+            MSG_UNEXPECTED_MESSAGE, MSG_FRAMING_ERROR -> onProtocolError(messageId)
             AudioLink.MSG_FOCUS_RESPONSE -> audioLink?.onFocus(Protobuf.readInt32Field(body, 1) ?: 0)
             else -> log.i("unhandled control message id=$messageId (${body.size} bytes) - continuing")
         }
+    }
+
+    private fun onProtocolError(messageId: Int) {
+        val detail = if (messageId == MSG_FRAMING_ERROR) "framing error" else "unexpected message"
+        log.w("head unit terminated the protocol: $detail")
+        SessionReport.fail(SessionReport.Category.UNKNOWN, detail, state.name, "protocol $messageId")
+        SessionStatus.failed("Protocol error", "The head unit reported a $detail.")
+        running = false
     }
 
     /**
@@ -241,16 +264,23 @@ class GearslipRunner(
             3 -> "NOT_SUPPORTED"
             4 -> "NOT_CURRENTLY_SUPPORTED"
             5 -> "PROBE_SUPPORTED"
+            6 -> "WIRELESS_PROJECTION_DISABLED"
+            7 -> "POWER_DOWN"
+            8 -> "USER_PROFILE_SWITCH"
             else -> "unknown"
         }
         log.w("<- ByeByeRequest: reason=$reason ($name) in state $state")
         log.hex("   byebye raw", body)
         SessionReport.fail(SessionReport.Category.BYEBYE, "ByeByeRequest reason=$reason ($name)", state.name, "bye $reason")
-        send(MSG_BYEBYE_RESPONSE, ByteArray(0), encrypted = true)
+        send(MSG_BYEBYE_RESPONSE, ByteArray(0), encrypted = state == State.WAIT_SDR || state == State.DONE)
         log.i("-> ByeByeResponse")
+        drainWriterOnExit = true
+        running = false
+        SessionStatus.disconnected()
     }
 
     private fun onVersionRequest(body: ByteArray) {
+        if (state != State.WAIT_VERSION) return
         if (body.size < 4) {
             log.w("VersionRequest too short (${body.size} bytes)")
             return
@@ -260,22 +290,16 @@ class GearslipRunner(
         log.i("<- VersionRequest: head unit speaks $major.$minor")
         SessionReport.protocolVersion(major, minor)
 
-        // PROTOCOL-DOWNGRADE EXPERIMENT. The 2018 Uconnect speaks 1.3 and ACCEPTS the JVC cert;
-        // the 2025 unit speaks 4.3 and rejects it at AuthComplete (-3). If the 4.3 identity check
-        // is tied to the *negotiated* protocol version rather than baked into the firmware,
-        // claiming an older version makes the newer unit skip the check entirely. CLAIM_VERSION
-        // = null restores the previous echo-the-head-unit behaviour.
-        val claim = CLAIM_VERSION ?: (major to minor)
-        val response = byteArrayOf(
-            ((claim.first shr 8) and 0xFF).toByte(), (claim.first and 0xFF).toByte(),
-            ((claim.second shr 8) and 0xFF).toByte(), (claim.second and 0xFF).toByte(),
-            0, 0, // STATUS_SUCCESS
-        )
-        send(MSG_VERSION_RESPONSE, response, encrypted = false)
-        log.i(
-            "-> VersionResponse: ${claim.first}.${claim.second} status=0 (STATUS_SUCCESS)" +
-                if (CLAIM_VERSION != null) " [FORCED; head unit offered $major.$minor]" else "",
-        )
+        val response = ProtocolVersion.respond(major, minor)
+        send(MSG_VERSION_RESPONSE, response.bytes, encrypted = false)
+        log.i("-> VersionResponse: ${response.major}.${response.minor}, supported=${response.supported}")
+        if (!response.supported) {
+            authenticationFailed = true
+            drainWriterOnExit = true
+            running = false
+            SessionStatus.failed("Unsupported protocol", "The head unit requested protocol $major.$minor.")
+            return
+        }
         state = State.TLS_HANDSHAKE
         SessionStatus.connecting("Securing the link")
         log.i("awaiting ClientHello - the head unit is the TLS client, we are the server")
@@ -292,17 +316,13 @@ class GearslipRunner(
             if (stopped) return
             log.e("TLS handshake threw", t)
             SessionReport.fail(SessionReport.Category.TLS, "handshake threw", t, state.name)
-            log.verdict(
-                "NOT VIABLE (TLS rejected)",
-                "The head unit aborted the TLS handshake. A bad_certificate / unknown_ca / " +
-                    "handshake_failure alert here means it validates the phone's certificate.",
-            )
             SessionStatus.failed(
-                "Head unit rejected the certificate",
-                "The head unit aborted the secure handshake. It validates the phone's certificate.",
+                "Secure connection failed",
+                "The secure handshake could not be completed. Check the session log for details.",
             )
             state = State.DONE
             authenticationFailed = true
+            running = false
             SessionReport.print()
             return
         }
@@ -319,7 +339,7 @@ class GearslipRunner(
 
     private fun onAuthComplete(body: ByteArray) {
         val status = Protobuf.readInt32Field(body, 1)
-        if (state != State.WAIT_AUTH && !(state == State.TLS_HANDSHAKE && status in listOf(-2, -3))) return
+        if (state != State.WAIT_AUTH && !(state == State.TLS_HANDSHAKE && status != null && status != 0)) return
         log.i("<- AuthComplete: status=$status")
         status?.let { SessionReport.auth(it) }
 
@@ -330,17 +350,17 @@ class GearslipRunner(
                 SessionStatus.connecting("Certificate accepted - discovering services")
                 sendServiceDiscoveryRequest()
             }
-            -2 -> {
-                SessionReport.fail(SessionReport.Category.CERTIFICATE, "AuthComplete status -2 (certificate error)", state.name, "auth -2")
-                log.verdict(
-                    "NOT VIABLE (STATUS_CERTIFICATE_ERROR)",
-                    "The head unit explicitly rejected the phone's self-signed certificate. " +
-                        "This is a definitive no - it validates the phone against a trust chain " +
-                        "we cannot issue from.",
-                )
+            -2, -23, -24 -> {
+                val reason = when (status) {
+                    -23 -> "The phone's certificate is not valid yet."
+                    -24 -> "The phone's certificate has expired."
+                    else -> "The head unit refused the phone's certificate."
+                }
+                SessionReport.fail(SessionReport.Category.CERTIFICATE, "AuthComplete status $status", state.name, "auth $status")
+                log.w("certificate rejected: $reason")
                 SessionStatus.failed(
                     "Head unit rejected the certificate",
-                    "The head unit refused the phone's certificate (certificate error).",
+                    reason,
                 )
                 state = State.DONE
                 authenticationFailed = true
@@ -371,6 +391,7 @@ class GearslipRunner(
                 authenticationFailed = true
             }
         }
+        if (authenticationFailed) running = false
     }
 
     private fun sendServiceDiscoveryRequest() {
@@ -381,6 +402,7 @@ class GearslipRunner(
     }
 
     private fun onServiceDiscoveryResponse(body: ByteArray) {
+        if (state != State.WAIT_SDR) return
         log.i("<- ServiceDiscoveryResponse (${body.size} bytes, decrypted successfully)")
         // Field 5 is the car's serial number, and the Bluetooth service carries the car's
         // Bluetooth address. Either one identifies the car, and logs get shared, so both stay out.
@@ -1055,8 +1077,12 @@ class GearslipRunner(
     private fun onPingRequest(body: ByteArray) {
         // The timestamp is an int64 and has to come back unchanged. Read as an int32 it was cut
         // short, and a car that checks the echo (an Audi MIB2+) gave up at its second ping.
-        val timestamp = Protobuf.readInt64Field(body, 1) ?: System.nanoTime()
-        send(MSG_PING_RESPONSE, Protobuf.varintField(1, timestamp), encrypted = tls.handshakeComplete)
+        val fields = Wire.fields(body)
+        val timestamp = Wire.varint(fields, 1) ?: return
+        val payload = Wire.bytes(fields, 3)
+        val response = Protobuf.varintField(1, timestamp) +
+            (payload?.let { Protobuf.bytesField(2, it) } ?: byteArrayOf())
+        send(MSG_PING_RESPONSE, response, encrypted = tls.handshakeComplete)
         log.i("<- PingRequest(timestamp=$timestamp) / -> PingResponse (keeping the session alive)")
     }
 
@@ -1078,41 +1104,16 @@ class GearslipRunner(
         try {
             writer.execute {
                 try {
-                    if (payload.size <= Frames.MAX_FRAME_PAYLOAD) {
-                        val framePayload = if (encrypted) tls.encrypt(payload) else payload
-                        output.write(Frames.build(channel, encrypted, framePayload, messageType))
-                    } else {
-                        // Split exactly as aasdk does: chunk the *plaintext*, encrypt each chunk
-                        // separately, and carry the total plaintext length in the FIRST frame.
-                        // Video keyframes for anything busier than a test card exceed 16 KB routinely.
-                        var offset = 0
-                        while (offset < payload.size) {
-                            val size = minOf(Frames.MAX_FRAME_PAYLOAD, payload.size - offset)
-                            val chunk = payload.copyOfRange(offset, offset + size)
-                            val frameType = when {
-                                offset == 0 -> Frames.TYPE_FIRST
-                                offset + size >= payload.size -> Frames.TYPE_LAST
-                                else -> Frames.TYPE_MIDDLE
-                            }
-                            val framePayload = if (encrypted) tls.encrypt(chunk) else chunk
-                            output.write(
-                                Frames.build(
-                                    channel, encrypted, framePayload, messageType, frameType,
-                                    if (frameType == Frames.TYPE_FIRST) payload.size else null,
-                                ),
-                            )
-                            offset += size
-                        }
-                        splitMessages++
-                    }
+                    val frameCount = Frames.writeMessage(output, channel, encrypted, messageType, payload) { tls.encrypt(it) }
+                    if (frameCount > 1) splitMessages++
                     output.flush()
-                } catch (e: java.io.IOException) {
+                } catch (e: IOException) {
                     if (running) log.w("send failed, stopping: ${e.message}")
                     running = false
                     videoSource?.stop()
                 }
             }
-        } catch (e: java.util.concurrent.RejectedExecutionException) {
+        } catch (e: RejectedExecutionException) {
             // The session is over; nothing more goes out.
         }
     }
@@ -1208,13 +1209,6 @@ class GearslipRunner(
     }
 
     private companion object {
-        /**
-         * Force the protocol version Gearslip claims in VersionResponse, as (major, minor), or
-         * null to echo the head unit. 1.3 is what the 2018 Uconnect (which accepts the JVC cert)
-         * speaks. This is the 2025 identity-check downgrade experiment: see onVersionRequest.
-         */
-        val CLAIM_VERSION: Pair<Int, Int>? = 1 to 3
-
         // protobuf/aap_protobuf/service/control/ControlMessageType.proto:7-17
         const val MSG_VERSION_REQUEST = 1
         const val MSG_VERSION_RESPONSE = 2
@@ -1226,6 +1220,8 @@ class GearslipRunner(
         const val MSG_PING_RESPONSE = 12
         const val MSG_BYEBYE_REQUEST = 15
         const val MSG_BYEBYE_RESPONSE = 16
+        const val MSG_UNEXPECTED_MESSAGE = 255
+        const val MSG_FRAMING_ERROR = 65535
         const val MSG_CHANNEL_OPEN_REQUEST = 7
         const val MSG_CHANNEL_OPEN_RESPONSE = 8
 
