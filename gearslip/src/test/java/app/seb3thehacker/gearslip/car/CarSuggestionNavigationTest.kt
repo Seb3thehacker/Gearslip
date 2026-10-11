@@ -6,19 +6,41 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CarSuggestionNavigationTest {
-    @Test fun `back dismisses suggestions before reaching the navigation app`() {
+    @Test fun `back compacts all destinations before reaching the navigation app`() {
         val navigator = CarNavigator("")
         var mapBackCalls = 0
         navigator.backInterceptor = { mapBackCalls++; true }
-        navigator.apps()
-        navigator.toggleSuggestions()
-        assertEquals(CarScreen.Home, navigator.current)
-        assertTrue(navigator.suggestionsOpen)
+        navigator.toggleAllSuggestions()
+        assertTrue(navigator.suggestionsExpanded)
 
         navigator.back()
-        assertFalse(navigator.suggestionsOpen)
+        assertFalse(navigator.suggestionsExpanded)
+        assertFalse(navigator.suggestionsCollapsed)
         assertEquals(0, mapBackCalls)
         navigator.back()
         assertEquals(1, mapBackCalls)
+    }
+
+    @Test fun `leaving home preserves a collapsed card until the suggestions clear`() {
+        val navigator = CarNavigator("")
+        navigator.collapseSuggestions()
+        navigator.apps()
+        navigator.home()
+        assertTrue(navigator.suggestionsCollapsed)
+
+        navigator.resetSuggestions()
+        assertFalse(navigator.suggestionsCollapsed)
+        assertFalse(navigator.suggestionsExpanded)
+    }
+
+    @Test fun `reopening the card restores the compact list`() {
+        val navigator = CarNavigator("")
+        navigator.toggleAllSuggestions()
+        navigator.toggleSuggestionCard()
+        assertTrue(navigator.suggestionsCollapsed)
+        assertFalse(navigator.suggestionsExpanded)
+        navigator.toggleSuggestionCard()
+        assertFalse(navigator.suggestionsCollapsed)
+        assertFalse(navigator.suggestionsExpanded)
     }
 }

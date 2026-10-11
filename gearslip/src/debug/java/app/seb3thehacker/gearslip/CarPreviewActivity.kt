@@ -1,5 +1,6 @@
 package app.seb3thehacker.gearslip
 
+import android.content.ComponentName
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -13,6 +14,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import app.seb3thehacker.gearslip.audio.AudioCaptureService
 import app.seb3thehacker.gearslip.audio.CarAudio
 import app.seb3thehacker.gearslip.car.CarEnvironment
+import app.seb3thehacker.gearslip.car.CarServices
+import app.seb3thehacker.gearslip.media.MediaApp
 import app.seb3thehacker.gearslip.car.CarSettings
 import app.seb3thehacker.gearslip.car.CarSuggestions
 import app.seb3thehacker.gearslip.car.CarToasts
@@ -31,6 +34,7 @@ import java.io.FileOutputStream
  * Writes preview-0.png (before any tap), then one more per tap.
  * Add --ez suggestions true for sample destinations, with optional suggestionsAfter and
  * clearSuggestionsAfter delays in milliseconds to check updates without moving launcher tiles.
+ * Add --ez media true for a silent sample media session with working playback controls.
  */
 class CarPreviewActivity : ComponentActivity() {
 
@@ -127,6 +131,14 @@ class CarPreviewActivity : ComponentActivity() {
             }, intent.getIntExtra("suggestionsAfter", 500).toLong())
             val clearAfter = intent.getIntExtra("clearSuggestionsAfter", 0)
             if (clearAfter > 0) main.postDelayed({ CarSuggestions.clear(suggestionOwner) }, clearAfter.toLong())
+        }
+
+        if (intent.getBooleanExtra("media", false)) {
+            main.postDelayed({
+                val previous = CarSettings.lastMedia.value
+                CarServices.openMedia(MediaApp(ComponentName(this, BenchMediaService::class.java), "Preview player", applicationInfo.uid))
+                CarSettings.setLastMedia(previous.orEmpty())
+            }, 750)
         }
 
         var step = 0

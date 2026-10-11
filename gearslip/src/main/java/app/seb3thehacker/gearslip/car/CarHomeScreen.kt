@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -64,11 +66,11 @@ import app.seb3thehacker.gearslip.media.NowPlaying
 import kotlinx.coroutines.launch
 
 /**
- * The home screen: the map on the left, the docked player on the right when asked for.
+ * The home screen: the map beside destination suggestions and the optional docked player.
  *
  * The map is whatever navigation app was used last, brought back on its own. The player sits in
- * the nav bar's pill until its dock button moves it here; the column closes itself back to a
- * full-width map once nothing is playing.
+ * the nav bar's pill until its dock button moves it here. The map fills the screen when neither
+ * suggestions nor a docked player need the column.
  */
 @Composable
 fun CarHome() {
@@ -92,24 +94,46 @@ fun CarHome() {
         if (onHome && seenHome[0]) CarServices.nav.replaceDeadSurface()
         if (onHome) seenHome[0] = true
     }
-    val splitScreen = phase == CarMedia.Phase.READY && now.isActive && panel != SidePanel.NONE
+    val showPlayer = phase == CarMedia.Phase.READY && now.isActive && panel != SidePanel.NONE
+    val suggestions by CarSuggestions.shortcuts.collectAsStateWithLifecycle()
+    LaunchedEffect(suggestions.isEmpty()) {
+        if (suggestions.isEmpty()) navigator.resetSuggestions()
+    }
+    val showSuggestions = suggestions.isNotEmpty()
+    val splitScreen = showPlayer || showSuggestions
 
     // No outer padding on any side, split screen or not - only the gap between the two panes
     // when the player is sharing the screen with the map.
-    Row(
-        Modifier.fillMaxSize(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Box(
-            Modifier
-                .weight(if (splitScreen) 2.1f else 1f)
-                .fillMaxHeight(),
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val sideWidth = (maxWidth / 3.1f).coerceAtLeast(240.dp).coerceAtMost(maxWidth * 0.45f)
+        Row(
+            Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            MapPane(navStatus, frame)
-        }
-        if (splitScreen) {
-            val side = Modifier.weight(1f).fillMaxHeight()
-            if (panel == SidePanel.LYRICS) SideLyrics(now, side) else DockedPlayer(now, side)
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+            ) {
+                MapPane(navStatus, frame)
+            }
+            if (splitScreen) {
+                BoxWithConstraints(Modifier.width(sideWidth).fillMaxHeight()) {
+                    val availableHeight = maxHeight
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (showSuggestions) {
+                            // Keep room for transport controls even while browsing all destinations.
+                            val cardHeight = if (showPlayer) (availableHeight - 144.dp).coerceAtLeast(64.dp) else availableHeight
+                            CarSuggestionCard(suggestions, navigator, Modifier.fillMaxWidth().heightIn(max = cardHeight), compactRows = cardHeight < 200.dp)
+                        }
+                        if (showPlayer) {
+                            val player = Modifier.weight(1f).fillMaxWidth()
+                            if (panel == SidePanel.LYRICS) SideLyrics(now, player)
+                            else DockedPlayer(now, player, compact = showSuggestions)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -168,7 +192,7 @@ private fun MapPane(status: CarAppConnection.Status, frame: CarEnvironment.Frame
  * twice. The X sends it back to the nav bar.
  */
 @Composable
-private fun DockedPlayer(now: NowPlaying, modifier: Modifier) {
+private fun DockedPlayer(now: NowPlaying, modifier: Modifier, compact: Boolean = false) {
     val navigator = LocalCarNavigator.current
     val media = CarServices.media
     val context = LocalContext.current
@@ -176,6 +200,20 @@ private fun DockedPlayer(now: NowPlaying, modifier: Modifier) {
     val art by produceState(now.art, now.art, now.artUri) { value = now.art ?: MediaArt.load(context, now.artUri) }
 
     Surface(modifier = modifier, color = rememberArtColor(art, MaterialTheme.colorScheme.surfaceVariant)) {
+        if (compact) {
+            Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f).clickable { navigator.media() }) {
+                        Text(now.title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(now.artist, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    GsIconButton(Icons.Filled.Close, "Back to the nav bar", navigator::closeSidePanel, size = 44.dp)
+                }
+                Spacer(Modifier.height(8.dp))
+                TransportRow(now, media, skip = 48.dp, modifier = Modifier.fillMaxWidth())
+            }
+            return@Surface
+        }
         BoxWithConstraints(Modifier.fillMaxSize().padding(12.dp)) {
             // Whatever height the controls below leave over, so the art grows on a taller
             // screen and shrinks rather than pushing the buttons off a short one.

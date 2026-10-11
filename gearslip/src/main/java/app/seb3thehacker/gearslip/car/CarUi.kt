@@ -34,7 +34,6 @@ import app.seb3thehacker.gearslip.host.CarAppConnection
 import app.seb3thehacker.gearslip.host.display
 import app.seb3thehacker.gearslip.host.text
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -227,7 +226,6 @@ fun CarUi() {
                                 }
                             }
                         }
-                        CarSuggestionPanel(navigator)
                         CarToastOverlay(Modifier.align(Alignment.BottomCenter))
                         CallPromptOverlay()
                         PopupTimer()
@@ -447,14 +445,6 @@ private fun CarNavBar(navigator: CarNavigator) {
                 // these two from three screens deep in a media app shouldn't mean reading it
                 // first.
                 NavHomeButton(navigator, entries, running)
-                Spacer(Modifier.width(6.dp))
-                val suggestions by CarSuggestions.shortcuts.collectAsState()
-                GsIconButton(
-                    Icons.Filled.Place, "Suggested destinations", navigator::toggleSuggestions,
-                    enabled = suggestions.isNotEmpty(),
-                    colors = navColors(navigator.suggestionsOpen),
-                    size = 44.dp,
-                )
                 Spacer(Modifier.width(6.dp))
                 NavItem(MediaIcons.Apps, navigator.current == CarScreen.Apps) { navigator.apps() }
                 val experimentalFeatures by CarSettings.experimentalFeaturesEnabled.collectAsState()
