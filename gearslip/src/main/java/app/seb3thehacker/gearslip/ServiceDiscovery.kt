@@ -1,5 +1,7 @@
 package app.seb3thehacker.gearslip
 
+import app.seb3thehacker.gearslip.audio.isSupportedPcm
+
 /**
  * Pulls the video service out of a ServiceDiscoveryResponse.
  *
@@ -29,6 +31,7 @@ object ServiceDiscovery {
         val density: Int,
         val widthMargin: Int = 0,
         val heightMargin: Int = 0,
+        val codecType: Int = CODEC_H264_BP,
     ) {
         val resolutionName: String get() = RESOLUTIONS[resolution] ?: "unknown($resolution)"
         val frameRateName: String get() = if (frameRate == 1) "60fps" else "30fps"
@@ -41,9 +44,16 @@ object ServiceDiscovery {
         /** What's left on the car's screen once the margins are cropped off. */
         fun visibleSize(): Pair<Int, Int>? = pixelSize()?.let { (w, h) -> (w - widthMargin) to (h - heightMargin) }
 
+        /** Keep discovery indices intact while excluding formats the encoder cannot produce. */
+        fun isSupportedH264(): Boolean {
+            val (width, height) = pixelSize() ?: return false
+            return codecType == CODEC_H264_BP && frameRate in 1..2 && density > 0 &&
+                widthMargin in 0 until width && heightMargin in 0 until height
+        }
+
         /** The margins as the strips of the frame the car UI keeps clear. */
         fun marginInsets(): Insets = Insets(
-            top = heightMargin / 2, bottom = heightMargin - heightMargin / 2,
+            top = heightMargin - heightMargin / 2, bottom = heightMargin / 2,
             left = widthMargin / 2, right = widthMargin - widthMargin / 2,
         )
 
@@ -52,9 +62,7 @@ object ServiceDiscovery {
     }
 
     /** [displayId] is MediaSinkService field 6: 0, the default, is the main screen. */
-    class VideoService(val serviceId: Int, val codecType: Int, val configs: List<VideoConfig>, val displayId: Int = 0) {
-        val codecName: String get() = CODECS[codecType] ?: "unknown($codecType)"
-    }
+    class VideoService(val serviceId: Int, val configs: List<VideoConfig>, val displayId: Int = 0)
 
     class AudioConfig(val sampleRate: Int, val bits: Int, val channels: Int)
 
@@ -84,14 +92,14 @@ object ServiceDiscovery {
             add(
                 AudioService(
                     serviceId = id,
-                    streamType = Wire.varint(sinkFields, 2)?.toInt() ?: 0,
-                    codecType = Wire.varint(sinkFields, 1)?.toInt() ?: 1,
+                    streamType = Wire.varint(sinkFields, 2)?.toInt() ?: 1,
+                    codecType = Wire.varint(sinkFields, 1)?.toInt() ?: CODEC_PCM,
                     configs = audioConfigs.map {
                         val f = Wire.fields(it)
                         AudioConfig(
-                            sampleRate = Wire.varint(f, 1)?.toInt() ?: 48_000,
-                            bits = Wire.varint(f, 2)?.toInt() ?: 16,
-                            channels = Wire.varint(f, 3)?.toInt() ?: 2,
+                            sampleRate = Wire.varint(f, 1)?.toInt() ?: 0,
+                            bits = Wire.varint(f, 2)?.toInt() ?: 0,
+                            channels = Wire.varint(f, 3)?.toInt() ?: 0,
                         )
                     },
                 ),
@@ -102,12 +110,11 @@ object ServiceDiscovery {
     /**
      * The media sink to stream to. Gearslip sends raw PCM, so a PCM sink wins: the 2022 Dacia
      * Jogger (LGE ULC 4.5) lists an AAC media sink on channel 3 before a PCM one on channel 5,
-     * and PCM pushed into the AAC sink was acked but played as silence. With no PCM sink, the
-     * first media sink is the best there is.
+     * and PCM pushed into the AAC sink was acked but played as silence. Without a supported PCM sink, audio stays on the phone.
      */
     fun pickMediaSink(sinks: List<AudioService>): AudioService? {
         val media = sinks.filter { it.streamType == STREAM_MEDIA }
-        return media.firstOrNull { it.codecType == CODEC_PCM } ?: media.firstOrNull()
+        return media.firstOrNull { it.codecType == CODEC_PCM && it.configs.any { config -> config.isSupportedPcm() } }
     }
 
     /**
@@ -143,9 +150,9 @@ object ServiceDiscovery {
                 codecType = Wire.varint(source, 1)?.toInt() ?: CODEC_PCM,
                 configs = listOf(
                     AudioConfig(
-                        sampleRate = Wire.varint(f, 1)?.toInt() ?: 16_000,
-                        bits = Wire.varint(f, 2)?.toInt() ?: 16,
-                        channels = Wire.varint(f, 3)?.toInt() ?: 1,
+                        sampleRate = Wire.varint(f, 1)?.toInt() ?: 0,
+                        bits = Wire.varint(f, 2)?.toInt() ?: 0,
+                        channels = Wire.varint(f, 3)?.toInt() ?: 0,
                     ),
                 ),
             )
@@ -155,6 +162,7 @@ object ServiceDiscovery {
 
     const val STREAM_MEDIA = 3
     const val CODEC_PCM = 1
+    const val CODEC_H264_BP = 3
 
     private val STREAMS = mapOf(0 to "NONE", 1 to "GUIDANCE", 2 to "SYSTEM_AUDIO", 3 to "MEDIA", 4 to "TELEPHONY")
 
@@ -259,18 +267,20 @@ object ServiceDiscovery {
             val videoConfigs = Wire.allBytes(sinkFields, 4)
             if (videoConfigs.isEmpty()) continue // audio sink, not video
 
-            val codecType = Wire.varint(sinkFields, 1)?.toInt() ?: 0
+            // The legacy service-level codec describes audio. Android Auto negotiates video
+            // from VideoConfiguration.codec_type (field 10), with H.264 for older receivers.
             val configs = videoConfigs.map {
                 val f = Wire.fields(it)
                 VideoConfig(
-                    resolution = Wire.varint(f, 1)?.toInt() ?: 0,
-                    frameRate = Wire.varint(f, 2)?.toInt() ?: 0,
+                    resolution = Wire.varint(f, 1)?.toInt() ?: 1,
+                    frameRate = Wire.varint(f, 2)?.toInt() ?: 1,
                     density = Wire.varint(f, 5)?.toInt() ?: 0,
                     widthMargin = Wire.varint(f, 3)?.toInt() ?: 0,
                     heightMargin = Wire.varint(f, 4)?.toInt() ?: 0,
+                    codecType = Wire.varint(f, 10)?.toInt() ?: CODEC_H264_BP,
                 )
             }
-            add(VideoService(id, codecType, configs, Wire.varint(sinkFields, 6)?.toInt() ?: 0))
+            add(VideoService(id, configs, Wire.varint(sinkFields, 6)?.toInt() ?: 0))
         }
     }
 

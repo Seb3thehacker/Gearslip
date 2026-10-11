@@ -11,9 +11,15 @@ import app.seb3thehacker.gearslip.car.CarKeys
 import app.seb3thehacker.gearslip.car.CarSensors
 import app.seb3thehacker.gearslip.car.CarServices
 import app.seb3thehacker.gearslip.car.CarSettings
+import app.seb3thehacker.gearslip.protocol.MediaProtocol
+import app.seb3thehacker.gearslip.protocol.MediaWindow
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * Drives the phone side of the control-channel handshake far enough to answer one question:
@@ -35,6 +41,7 @@ class GearslipRunner(
     private val identityProvider: () -> CertProvider.Identity,
     private val projection: Projection? = null,
     private val vehicleProfileFor: (ServiceDiscovery.HeadUnitInfo) -> VehicleProfile? = { null },
+    private val startEncoder: (VideoSource) -> Unit = VideoSource::start,
 ) {
     private val log = GearslipLog.tagged("PROTO")
 
@@ -45,11 +52,16 @@ class GearslipRunner(
     private lateinit var identityTask: FutureTask<PhoneTls>
 
     /** Sends every message, in order, so no other thread ever blocks on the USB link. See [send]. */
-    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "gearslip-writer") }
+    private val writer = Executors.newSingleThreadExecutor { Thread(it, "gearslip-writer") }
 
     /** Waits for the certificate only when TLS is first needed; see [run]. */
     private val tls: PhoneTls by lazy { identityTask.get() }
     private var authenticationFailed = false
+    private var resourcesReleased = false
+    private val lifecycleLock = Any()
+    private val closedChannels = ConcurrentHashMap.newKeySet<Int>()
+    private val openingChannels = HashSet<Int>()
+    private val openedChannels = HashSet<Int>()
     @Volatile private var stopped = false
 
     @Volatile private var state = State.WAIT_VERSION
@@ -59,15 +71,18 @@ class GearslipRunner(
     @Volatile private var videoChannelId: Int = -1
     private var videoConfigs: List<ServiceDiscovery.VideoConfig> = emptyList()
     private var selectedConfigIndex: Int? = null
+    private var pendingVideoFocus: Int? = null
     private var vehicleProfile: VehicleProfile? = null
     @Volatile private var videoStarted = false
     private var videoSource: VideoSource? = null
-    @Volatile private var inFlight = 0
-    /** Guards [inFlight]: the encoder thread waits on it for the head unit's acks. */
-    private val ackLock = Object()
+    private val videoWindow = MediaWindow()
+    private val videoLock = Any()
+    private var videoSession = 0
+    private var awaitingVideoKeyFrame = true
+    private val inFlight get() = videoWindow.inFlight
     /** Time the encoder spent waiting for acks since the last stats line. */
     @Volatile private var ackWaitMs = 0L
-    @Volatile private var maxUnacked = 4
+    @Volatile private var maxUnacked = 0
     @Volatile private var framesSent = 0
     @Volatile private var inputChannelId: Int = -1
     @Volatile private var inputKeycodes: List<Int> = emptyList()
@@ -76,12 +91,10 @@ class GearslipRunner(
     @Volatile private var clusterNav: ClusterNav? = null
     private var sensorTypes: List<Int> = emptyList()
     @Volatile private var audioLink: AudioLink? = null
-    private var audioMessagesSeen = 0
     private var touchWidth = 0
     private var touchHeight = 0
     private var touchesSeen = 0
     @Volatile private var acksSeen = 0
-    @Volatile private var lastAckAt = 0L
     @Volatile private var splitMessages = 0
     @Volatile private var resyncRequested = false
     @Volatile private var resyncAttempts = 0
@@ -134,6 +147,7 @@ class GearslipRunner(
         } finally {
             running = false
             writer.shutdownNow()
+            releaseChannels()
             log.flush()
         }
     }
@@ -142,23 +156,37 @@ class GearslipRunner(
         stopped = true
         running = false
         writer.shutdownNow()
-        CarFocus.request = null
-        CarFocus.set(true)
-        synchronized(ackLock) { ackLock.notifyAll() } // free an encoder waiting on an ack
-        videoSource?.stop()
-        videoSource = null
-        audioLink?.close()
-        audioLink = null
-        CarSensors.clear()
-        CarMic.current = null
-        mediaStatus?.stop()
-        mediaStatus = null
-        clusterNav?.stop()
-        clusterNav = null
-        lastSensorNight = null
-        CarEnvironment.setSensorNight(null) // back to the clock until a car says otherwise
-        projection?.onProjectionStopped()
+        releaseChannels()
         SessionStatus.disconnected()
+    }
+
+    private fun releaseChannels() {
+        val source = synchronized(lifecycleLock) {
+            if (resourcesReleased) return
+            resourcesReleased = true
+            videoInputAllowed = false
+            CarFocus.request = null
+            CarFocus.set(true)
+            videoWindow.stop()
+            val source = videoSource
+            videoSource = null
+            audioLink?.close()
+            audioLink = null
+            CarSensors.clear()
+            CarMic.current?.close()
+            CarMic.current = null
+            mediaStatus?.stop()
+            mediaStatus = null
+            clusterNav?.stop()
+            clusterNav = null
+            lastSensorNight = null
+            CarEnvironment.setSensorNight(null)
+            projection?.onProjectionStopped()
+            source
+        }
+        // The encoder can be sending its final frame. Never join it while holding a lifecycle
+        // or video lock that its callback might need.
+        source?.stop()
     }
 
     private fun handleFrame(frame: Frames.Frame) {
@@ -186,33 +214,7 @@ class GearslipRunner(
         lastProgress = System.currentTimeMillis()
 
         if (frame.channel != Frames.CHANNEL_CONTROL) {
-            if (frame.channel == videoChannelId) {
-                onVideoMessage(messageId, body)
-            } else if (frame.channel == inputChannelId) {
-                onInputMessage(messageId, body)
-            } else if (frame.channel == sensorChannelId) {
-                onSensorMessage(messageId, body)
-            } else if (frame.channel == clusterNav?.channelId) {
-                clusterNav?.onMessage(messageId, body)
-            } else if (frame.channel == mediaStatus?.channelId) {
-                mediaStatus?.onMessage(messageId, body)
-            } else if (frame.channel == CarMic.current?.channelId) {
-                CarMic.current?.onMessage(messageId, body)
-            } else if (frame.channel == audioLink?.channelId) {
-                // The audio channel is the one still being reverse-engineered, and its first few
-                // replies are what tell us why. Raw bytes for those, then quiet.
-                if (audioMessagesSeen < AUDIO_TRACE_MESSAGES) {
-                    audioMessagesSeen++
-                    log.i(
-                        "audio frame #$audioMessagesSeen: channel=${frame.channel} " +
-                            "encrypted=${frame.encrypted} raw=${frame.payload.size}B decrypted=${message.size}B",
-                    )
-                    log.hex("   audio raw", message, limit = 64)
-                }
-                audioLink?.onMessage(messageId, body)
-            } else {
-                log.i("ignoring message id $messageId on channel ${frame.channel}")
-            }
+            onServiceFrame(frame.channel, messageId, body, frame.messageType == Frames.MESSAGE_CONTROL)
             return
         }
 
@@ -227,6 +229,92 @@ class GearslipRunner(
             else -> log.i("unhandled control message id=$messageId (${body.size} bytes) - continuing")
         }
     }
+
+    private fun onServiceFrame(channel: Int, messageId: Int, body: ByteArray, channelControl: Boolean) {
+        if (channel in closedChannels) return
+        if (channelControl) {
+            when (messageId) {
+                MSG_CHANNEL_CLOSE_NOTIFICATION -> {
+                    onChannelClosed(channel)
+                    return
+                }
+                MSG_CHANNEL_OPEN_RESPONSE -> {
+                    if (!openingChannels.remove(channel)) {
+                        log.w("ignoring unsolicited channel-open response on channel $channel")
+                        return
+                    }
+                    if (Protobuf.readInt32Field(body, 1) == 0) openedChannels.add(channel)
+                    else closedChannels.add(channel)
+                }
+                else -> return
+            }
+        } else if (channel !in openedChannels || messageId == MSG_CHANNEL_OPEN_RESPONSE ||
+            messageId == MSG_CHANNEL_CLOSE_NOTIFICATION) return
+        onServiceMessage(channel, messageId, body)
+    }
+
+    private fun onChannelClosed(channel: Int) {
+        val source = synchronized(lifecycleLock) {
+            if (stopped || resourcesReleased || !closedChannels.add(channel)) return
+            openingChannels.remove(channel)
+            openedChannels.remove(channel)
+            log.i("head unit closed channel $channel")
+            when (channel) {
+                inputChannelId -> inputChannelId = -1
+                sensorChannelId -> {
+                    sensorChannelId = -1
+                    CarSensors.clear()
+                    lastSensorNight = null
+                    CarEnvironment.setSensorNight(null)
+                }
+                audioLink?.channelId -> { audioLink?.close(); audioLink = null }
+                CarMic.current?.channelId -> { CarMic.current?.close(); CarMic.current = null }
+                mediaStatus?.channelId -> { mediaStatus?.stop(); mediaStatus = null }
+                clusterNav?.channelId -> { clusterNav?.stop(); clusterNav = null }
+            }
+            if (channel != videoChannelId) return@synchronized null
+            synchronized(videoLock) {
+                videoWindow.stop()
+                videoProjected = false
+                videoInputAllowed = false
+                videoStarted = false
+                videoChannelId = -1
+                selectedConfigIndex = null
+                pendingVideoFocus = null
+                maxUnacked = 0
+            }
+            CarFocus.request = null
+            CarFocus.set(true)
+            val source = videoSource
+            videoSource = null
+            projection?.onProjectionStopped()
+            SessionStatus.failed("Video channel closed", "The head unit stopped accepting video.")
+            source
+        }
+        source?.stop()
+    }
+
+    private fun onServiceMessage(channel: Int, messageId: Int, body: ByteArray): Unit = synchronized(lifecycleLock) {
+        if (stopped || !running || resourcesReleased) return
+        if (channel == videoChannelId) {
+            onVideoMessage(messageId, body)
+        } else if (channel == inputChannelId) {
+            onInputMessage(messageId, body)
+        } else if (channel == sensorChannelId) {
+            onSensorMessage(messageId, body)
+        } else if (channel == clusterNav?.channelId) {
+            clusterNav?.onMessage(messageId, body)
+        } else if (channel == mediaStatus?.channelId) {
+            mediaStatus?.onMessage(messageId, body)
+        } else if (channel == CarMic.current?.channelId) {
+            CarMic.current?.onMessage(messageId, body)
+        } else if (channel == audioLink?.channelId) {
+            audioLink?.onMessage(messageId, body)
+        } else {
+            log.i("ignoring message id $messageId on channel ${channel}")
+        }
+    }
+
 
     /**
      * The head unit asking to end the session. It drops USB a few seconds later whether or not
@@ -394,23 +482,20 @@ class GearslipRunner(
                 "advertising its channels over the encrypted session. A phone-side client is " +
                 "possible against THIS unit - portability to newer units is still unproven.",
         )
-        state = State.DONE
         val info = ServiceDiscovery.findHeadUnitInfo(body)
         log.i("head unit: $info")
         SessionReport.headUnit(info.toString())
         SessionReport.headUnitInfo = info
-        vehicleProfile = runCatching { vehicleProfileFor(info) }.getOrNull()
-        val profile = vehicleProfile
-        SessionReport.profile(profile?.name)
-        if (profile != null) {
-            log.i("vehicle profile matched: \"${profile.name}\" resolution=${profile.resolution} insets=${profile.insets}")
-        } else {
-            log.i("no vehicle profile matched - default display settings (add one to vehicles.json)")
+        val profile = runCatching { vehicleProfileFor(info) }.getOrNull()
+        synchronized(lifecycleLock) {
+            if (stopped || !running || resourcesReleased) return
+            state = State.DONE
+            vehicleProfile = profile
+            SessionReport.profile(profile?.name)
+            CarEnvironment.setVehicle(profile?.name ?: "Unknown vehicle", profile?.insets ?: Insets.NONE)
+            SessionStatus.connecting("Starting video")
+            startVideoChannel(body)
         }
-        CarEnvironment.setVehicle(profile?.name ?: "Unknown vehicle", profile?.insets ?: Insets.NONE)
-        SessionStatus.connecting("Starting video")
-
-        startVideoChannel(body)
     }
 
     // --- Phase A: video channel bring-up (no encoder yet) -------------------------------
@@ -435,12 +520,14 @@ class GearslipRunner(
         videoChannelId = video.serviceId
         videoConfigs = video.configs
 
-        log.i("video service: channel=${video.serviceId} codec=${video.codecName} display=${video.displayId}")
+        log.i("video service: channel=${video.serviceId} display=${video.displayId}")
         video.configs.forEachIndexed { index, config ->
             log.i("  config[$index] = $config")
         }
-        if (video.codecType != CODEC_H264_BP) {
-            log.w("head unit wants ${video.codecName}, not H264_BP - Phase B must match this")
+        if (video.configs.none { it.isSupportedH264() }) {
+            log.w("head unit offers no supported H.264 video configuration")
+            SessionStatus.failed("Unsupported video codec", "This head unit does not offer H.264 video.")
+            return
         }
 
         openChannel(video.serviceId)
@@ -481,9 +568,6 @@ class GearslipRunner(
                 "no MEDIA sink; head unit offered ${sinks.joinToString { it.streamName }.ifEmpty { "none" }}",
             )
             return
-        }
-        if (media.codecType != ServiceDiscovery.CODEC_PCM) {
-            log.w("the car offers no PCM media sink, only ${media.codecName}; it may play our PCM as silence")
         }
         val first = media.configs.firstOrNull()
         SessionReport.audio(
@@ -634,6 +718,8 @@ class GearslipRunner(
     }
 
     private fun openChannel(serviceId: Int) {
+        if (serviceId !in 1..255 || serviceId in closedChannels || serviceId in openedChannels ||
+            !openingChannels.add(serviceId)) return
         val request = Protobuf.varintField(1, 0L) +          // priority (sint32 zigzag: 0 -> 0)
             Protobuf.varintField(2, serviceId.toLong())      // service_id
         send(
@@ -667,50 +753,46 @@ class GearslipRunner(
             MSG_KEY_BINDING_RESPONSE ->
                 log.i("<- KeyBindingResponse: status=${Protobuf.readInt32Field(body, 1)}")
 
-            MSG_INPUT_REPORT -> {
-                val report = Wire.fields(body)
-                // The 2018 Uconnect agrees to Exit but keeps showing our last frame and sending
-                // touches, which looked like a crash. A touch means our screen is still up there.
-                if (videoStarted && !videoProjected && Wire.bytes(report, 3) != null) {
-                    log.w("the car said it took its screen back but still sends touches - showing ours again")
-                    onVideoFocus(VIDEO_FOCUS_PROJECTED)
-                }
-                Wire.bytes(report, 4)?.let(::onKeyEvent)
-                Wire.bytes(report, 6)?.let(::onRelativeEvent)
-                val touch = Wire.bytes(report, 3) ?: Wire.bytes(report, 7)
-                if (touch == null) {
-                    return
-                }
-                val touchFields = Wire.fields(touch)
-                val action = Wire.varint(touchFields, 3)?.toInt() ?: 0
-                val pointers = Wire.allBytes(touchFields, 1)
-                if (pointers.isEmpty()) return
-                val size = videoConfigs.getOrNull(selectedConfigIndex ?: 0)?.pixelSize()
-                val points = pointers.mapIndexedNotNull { index, pointer ->
-                    val fields = Wire.fields(pointer)
-                    val rawX = Wire.varint(fields, 1)?.toInt() ?: return@mapIndexedNotNull null
-                    val rawY = Wire.varint(fields, 2)?.toInt() ?: return@mapIndexedNotNull null
-                    val id = Wire.varint(fields, 3)?.toInt() ?: index
-                    TouchPoint(id, clamp(rawX, size?.first), clamp(rawY, size?.second))
-                }
-                if (points.isEmpty()) return
-                val actionIndex = (Wire.varint(touchFields, 2)?.toInt() ?: 0).coerceIn(0, points.size - 1)
-                if (points.size > 1 && touchesSeen < 3) {
-                    log.i("multi-touch: ${points.size} pointers, action=$action index=$actionIndex")
-                }
-
-                touchesSeen++
-                if (touchesSeen <= 10 || action == ACTION_DOWN || action == ACTION_UP) {
-                    val at = points[actionIndex]
-                    log.i("<- Touch action=$action at (${at.x.toInt()},${at.y.toInt()}) pointers=${points.size}")
-                }
-                // Time the next frame against this tap: see [reportTouchLatency].
-                if (action == ACTION_DOWN || action == ACTION_UP) touchAtUs = System.nanoTime() / 1000
-                projection?.onTouch(action, actionIndex, points)
-            }
+            MSG_INPUT_REPORT -> onInputReport(body)
 
             else -> log.i("<- unhandled input message id=$messageId (${body.size} bytes)")
         }
+    }
+
+    private fun onInputReport(body: ByteArray) {
+        val report = Wire.fields(body)
+        if (!videoInputAllowed) return
+        Wire.bytes(report, 4)?.let(::onKeyEvent)
+        Wire.bytes(report, 6)?.let(::onRelativeEvent)
+        val touch = Wire.bytes(report, 3) ?: Wire.bytes(report, 7)
+        if (touch == null) {
+            return
+        }
+        val touchFields = Wire.fields(touch)
+        val action = Wire.varint(touchFields, 3)?.toInt() ?: 0
+        val pointers = Wire.allBytes(touchFields, 1)
+        if (pointers.isEmpty()) return
+        val size = videoConfigs.getOrNull(selectedConfigIndex ?: 0)?.pixelSize()
+        val points = pointers.mapIndexedNotNull { index, pointer ->
+            val fields = Wire.fields(pointer)
+            val rawX = Wire.varint(fields, 1)?.toInt() ?: return@mapIndexedNotNull null
+            val rawY = Wire.varint(fields, 2)?.toInt() ?: return@mapIndexedNotNull null
+            val id = Wire.varint(fields, 3)?.toInt() ?: index
+            TouchPoint(id, clamp(rawX, size?.first), clamp(rawY, size?.second))
+        }
+        if (points.isEmpty()) return
+        val actionIndex = (Wire.varint(touchFields, 2)?.toInt() ?: 0).coerceIn(0, points.size - 1)
+        if (points.size > 1 && touchesSeen < 3) {
+            log.i("multi-touch: ${points.size} pointers, action=$action index=$actionIndex")
+        }
+        touchesSeen++
+        if (touchesSeen <= 10 || action == ACTION_DOWN || action == ACTION_UP) {
+            val at = points[actionIndex]
+            log.i("<- Touch action=$action at (${at.x.toInt()},${at.y.toInt()}) pointers=${points.size}")
+        }
+        // Time the next frame against this tap: see [reportTouchLatency].
+        if (action == ACTION_DOWN || action == ACTION_UP) touchAtUs = System.nanoTime() / 1000
+        projection?.onTouch(action, actionIndex, points)
     }
 
     /**
@@ -780,37 +862,12 @@ class GearslipRunner(
                 log.i("-> Setup(codec=VIDEO_H264_BP)")
             }
 
-            MSG_MEDIA_CONFIG -> {
-                val fields = Wire.fields(body)
-                val status = Wire.varint(fields, 1)?.toInt()
-                val maxUnackedFromConfig = Wire.varint(fields, 2)?.toInt()
-                val indices = fields.filter { it.number == 3 && it.wireType == 0 }.map { it.varint }
-                log.i(
-                    "<- Config: status=$status (1=WAIT 2=READY) max_unacked=$maxUnackedFromConfig " +
-                        "configuration_indices=$indices",
-                )
-                if (maxUnackedFromConfig != null) maxUnacked = maxOf(1, maxUnackedFromConfig)
-                val offered = indices.map { it.toInt() }
-                val preferred = vehicleProfile?.resolution?.let { want ->
-                    offered.firstOrNull { videoConfigs.getOrNull(it)?.resolutionName == want }
-                }
-                selectedConfigIndex = preferred ?: fitToScreen(offered) ?: offered.firstOrNull()
-                log.i("selected config index $selectedConfigIndex from offered $offered")
-                SessionReport.video(
-                    "${videoConfigs.getOrNull(selectedConfigIndex ?: -1)?.resolutionName ?: "?"} " +
-                        "(head unit offered ${offered.size}), max_unacked=$maxUnacked",
-                )
-                // VideoFocusRequestNotification { mode = 2; reason = 3 }
-                val focus = Protobuf.varintField(2, VIDEO_FOCUS_PROJECTED.toLong()) +
-                    Protobuf.varintField(3, 1L)
-                send(MSG_VIDEO_FOCUS_REQUEST, focus, encrypted = true, channel = videoChannelId)
-                log.i("-> VideoFocusRequest(mode=PROJECTED)")
-            }
+            MSG_MEDIA_CONFIG -> onVideoConfig(body)
 
             MSG_VIDEO_FOCUS_NOTIFICATION -> {
                 // VideoFocusNotification { focus = 1; unsolicited = 2 }
                 val fields = Wire.fields(body)
-                val mode = Wire.varint(fields, 1)?.toInt() ?: VIDEO_FOCUS_PROJECTED
+                val mode = Wire.varint(fields, 1)?.toInt() ?: return
                 log.i("<- VideoFocusNotification: mode=$mode unsolicited=${Wire.varint(fields, 2)}")
                 onVideoFocus(mode)
             }
@@ -821,23 +878,52 @@ class GearslipRunner(
                 log.i("<- VideoFocusRequest from the head unit: mode=${Wire.varint(fields, 2)} reason=${Wire.varint(fields, 3)}")
             }
 
-            MSG_MEDIA_ACK -> {
-                val fields = Wire.fields(body)
-                val acked = Wire.varint(fields, 2)?.toInt() ?: 1
-                synchronized(ackLock) {
-                    inFlight = maxOf(0, inFlight - maxOf(1, acked))
-                    acksSeen++
-                    lastAckAt = System.currentTimeMillis()
-                    ackLock.notifyAll()
-                }
-                if (framesSent <= 3 || framesSent % 60 == 0) {
-                    log.i("<- MediaAck(ack=$acked) inFlight=$inFlight after $framesSent frames")
-                }
+            MSG_MEDIA_ACK -> MediaProtocol.ack(body)?.let { ack ->
+                if (videoWindow.acknowledge(ack)) acksSeen++
+            }
+            MediaProtocol.UNEXPECTED_MESSAGE -> {
+                videoWindow.stop()
+                log.w("video: head unit rejected a message")
+                videoSource?.stop()
+                SessionStatus.failed("Video rejected", "The head unit rejected the video stream.")
             }
 
             else -> log.i("<- unhandled video message id=$messageId (${body.size} bytes)")
         }
     }
+
+    private fun onVideoConfig(body: ByteArray) {
+        val answer = MediaProtocol.config(body)
+        if (answer == null || answer.status != MediaProtocol.READY) {
+            log.w("video: waiting for a valid READY configuration")
+            return
+        }
+        if (videoStarted) return
+        maxUnacked = answer.maxUnacked
+        val offered = answer.indices.filter { videoConfigs.getOrNull(it)?.isSupportedH264() == true }
+        val preferred = vehicleProfile?.resolution?.let { want ->
+            offered.firstOrNull { videoConfigs.getOrNull(it)?.resolutionName == want }
+        }
+        selectedConfigIndex = preferred ?: fitToScreen(offered) ?: offered.firstOrNull()
+        log.i("selected config index $selectedConfigIndex from offered $offered")
+        SessionReport.video(
+            "${videoConfigs.getOrNull(selectedConfigIndex ?: -1)?.resolutionName ?: "?"} " +
+                "(head unit offered ${offered.size}), max_unacked=$maxUnacked",
+        )
+        if (selectedConfigIndex == null) {
+            log.w("video: no supported configuration offered")
+            return
+        }
+        val pendingFocus = pendingVideoFocus
+        pendingVideoFocus = null
+        if (pendingFocus == VIDEO_FOCUS_PROJECTED || pendingFocus == VIDEO_FOCUS_PROJECTED_NO_INPUT) {
+            onVideoFocus(pendingFocus)
+            return
+        }
+        val focus = Protobuf.varintField(2, VIDEO_FOCUS_PROJECTED.toLong()) + Protobuf.varintField(3, 0)
+        send(MSG_VIDEO_FOCUS_REQUEST, focus, encrypted = true, channel = videoChannelId)
+    }
+
 
     // --- Phase B: encode and stream H.264 ----------------------------------------------
     //
@@ -874,10 +960,7 @@ class GearslipRunner(
         }
         config.visibleSize()?.let { (w, h) -> SessionReport.carScreen("${w}x$h", config.density) }
 
-        val start = Protobuf.varintField(1, SESSION_ID.toLong()) +
-            Protobuf.varintField(2, index.toLong())
-        send(MSG_MEDIA_START, start, encrypted = true, channel = videoChannelId)
-        log.i("-> Start(session_id=$SESSION_ID, configuration_index=$index -> $config)")
+        beginVideoStream(index)
         // The car crops its margins off the frame, so keep the UI out of them unless a vehicle
         // profile has its own tuned insets.
         if (vehicleProfile?.insets.let { it == null || it == Insets.NONE }) {
@@ -887,64 +970,55 @@ class GearslipRunner(
         }
 
         val useProjection = projection != null
-        videoSource = VideoSource(
+        val source = VideoSource(
             width = width,
             height = height,
             frameRate = if (config.frameRate == 1) 60 else 30,
             mode = if (useProjection) VideoSource.Mode.SURFACE else VideoSource.Mode.TEST_CARD,
-            onCodecConfig = { csd ->
-                lastCodecConfig = csd
-                send(MSG_MEDIA_CODEC_CONFIG, csd, encrypted = true, channel = videoChannelId)
-                log.i("-> CodecConfig (${csd.size} bytes SPS/PPS)")
-                log.hex("   csd", csd, limit = 64)
-            },
+            onCodecConfig = ::onVideoCodecConfig,
             onFrame = { data, presentationTimeUs, keyFrame ->
                 sendVideoFrame(data, presentationTimeUs, keyFrame)
             },
-        ).also { source ->
-            runCatching {
-                source.start()
-                val surface = source.inputSurface
-                if (projection != null && surface != null) {
-                    projection.onSurfaceReady(surface, width, height, config.density)
-                    SessionStatus.projecting()
-                }
-            }.onFailure { e -> log.e("encoder start failed", e) }
-        }
+        )
+        // Called under lifecycleLock: publish before startup, including reentrant stop callbacks.
+        videoSource = source
+        runCatching {
+            startEncoder(source)
+            val surface = source.inputSurface
+            if (!stopped && !resourcesReleased && projection != null && surface != null) {
+                projection.onSurfaceReady(surface, width, height, config.density)
+                if (!stopped && !resourcesReleased) SessionStatus.projecting()
+            }
+        }.onFailure { e -> log.e("encoder start failed", e) }
     }
 
-    /**
-     * Flow control: the head unit allows max_unacked frames in flight (LIVI allows one). When
-     * the window is full this waits for an ack instead of dropping the frame. A dropped frame
-     * breaks the decoder's chain, so it cost a keyframe to repair; keyframes are twenty times
-     * the size, so they caused more drops, and the stream sank into a storm of them (345 in a
-     * minute on LIVI, at 5-12 fps). Waiting here holds the encoder back instead, which simply
-     * makes it produce fewer frames, each one whole.
-     */
+    private fun onVideoCodecConfig(csd: ByteArray): Unit = synchronized(videoLock) {
+        if (stopped || !running || videoChannelId < 0) return
+        lastCodecConfig = csd
+        if (!videoProjected) return
+        send(MSG_MEDIA_CODEC_CONFIG, csd, encrypted = true, channel = videoChannelId)
+        log.i("-> CodecConfig (${csd.size} bytes SPS/PPS)")
+        log.hex("   csd", csd, limit = 64)
+    }
+
+    /** Backpressure preserves every encoded frame; only acknowledged packets release credit. */
     private fun sendVideoFrame(data: ByteArray, presentationTimeUs: Long, keyFrame: Boolean) {
         // The car is showing its own screen and would throw these away.
-        if (!videoProjected) return
-        synchronized(ackLock) {
-            val waitStart = System.currentTimeMillis()
-            while (running && inFlight >= maxUnacked) {
-                // A lost ack would otherwise hold the stream forever, which looks like a frozen
-                // picture. After a long silence, assume the window cleared and carry on.
-                val since = System.currentTimeMillis() - lastAckAt
-                if (since > ACK_STALL_MS) {
-                    log.w("no ack for ${since}ms with $inFlight in flight - resetting the window")
-                    inFlight = 0
-                    lastAckAt = System.currentTimeMillis() // one warning per stall, not one per frame
-                    break
-                }
-                ackLock.wait(ACK_STALL_MS - since + 1)
-            }
-            ackWaitMs += System.currentTimeMillis() - waitStart
+        val session = synchronized(videoLock) {
+            if (!videoProjected || awaitingVideoKeyFrame && !keyFrame) return
+            videoSession
         }
+        val waitStart = System.nanoTime()
+        try {
+            if (!videoWindow.reserve(session)) return
+        } catch (e: IOException) {
+            log.w("video: ${e.message}; stopping the stream")
+            running = false
+            runCatching { input.close() }
+            return
+        }
+        ackWaitMs += (System.nanoTime() - waitStart) / 1_000_000
         if (!running) return
-        val timestamp = ByteArray(8)
-        for (i in 0 until 8) {
-            timestamp[i] = ((presentationTimeUs shr ((7 - i) * 8)) and 0xFF).toByte()
-        }
         if (keyFrame) {
             if (resyncRequested) {
                 log.i("resync keyframe delivered after $resyncAttempts attempt(s)")
@@ -953,10 +1027,11 @@ class GearslipRunner(
             resyncAttempts = 0
             lastKeyframeSentAt = System.currentTimeMillis()
         }
-        // Counted before it's queued: the writer may send it and the ack come back before this
-        // thread runs again, and an ack counted ahead of its frame would leave the window full.
-        synchronized(ackLock) { inFlight++ }
-        send(MSG_MEDIA_DATA, timestamp + data, encrypted = true, channel = videoChannelId)
+        synchronized(videoLock) {
+            if (!videoProjected || videoSession != session) return
+            send(MSG_MEDIA_DATA, MediaProtocol.data(presentationTimeUs, data), encrypted = true, channel = videoChannelId)
+            if (keyFrame) awaitingVideoKeyFrame = false
+        }
         reportTouchLatency(presentationTimeUs)
         framesSent++
         if (framesSent <= 3 || keyFrame && framesSent % 30 == 0) {
@@ -969,6 +1044,7 @@ class GearslipRunner(
 
     /** Whether the car is showing Gearslip; false while it shows its own interface. */
     @Volatile private var videoProjected = true
+    @Volatile private var videoInputAllowed = true
     /** The encoder's SPS/PPS, resent when the car hands its screen back. */
     @Volatile private var lastCodecConfig: ByteArray? = null
 
@@ -978,8 +1054,20 @@ class GearslipRunner(
      * screen nothing is sent, and on return the stream restarts from the codec config and a fresh
      * keyframe, since the car's decoder may have been reset in between.
      */
-    private fun onVideoFocus(mode: Int) {
+    private fun onVideoFocus(mode: Int): Unit = synchronized(lifecycleLock) {
+        if (stopped || !running || resourcesReleased) return
+        if (mode !in VIDEO_FOCUS_PROJECTED..VIDEO_FOCUS_PROJECTED_NO_INPUT) return
+        if (selectedConfigIndex == null || maxUnacked <= 0) {
+            pendingVideoFocus = mode
+            return
+        }
+        updateVideoFocus(mode)
+    }
+
+    private fun updateVideoFocus(mode: Int): Unit = synchronized(videoLock) {
+        if (selectedConfigIndex == null || maxUnacked <= 0) return
         val projected = mode == VIDEO_FOCUS_PROJECTED || mode == VIDEO_FOCUS_PROJECTED_NO_INPUT
+        videoInputAllowed = mode == VIDEO_FOCUS_PROJECTED
         if (!videoStarted) {
             // The head unit repeats this while it waits for frames; only start once.
             if (!projected) return
@@ -994,28 +1082,30 @@ class GearslipRunner(
         CarFocus.set(projected)
         if (projected) {
             log.i("the car handed its screen back - restarting the stream")
-            // Frames sent just before the car took over may never be acked.
-            synchronized(ackLock) {
-                inFlight = 0
-                ackLock.notifyAll()
-            }
-            val start = Protobuf.varintField(1, SESSION_ID.toLong()) +
-                Protobuf.varintField(2, (selectedConfigIndex ?: 0).toLong())
-            send(MSG_MEDIA_START, start, encrypted = true, channel = videoChannelId)
-            log.i("-> Start(session_id=$SESSION_ID)")
+            beginVideoStream(selectedConfigIndex ?: return)
             lastCodecConfig?.let { send(MSG_MEDIA_CODEC_CONFIG, it, encrypted = true, channel = videoChannelId) }
             videoSource?.requestSyncFrame()
         } else {
             // A phone ends the stream when the car takes its screen. LIVI switches on the focus
             // answer alone, but the 2018 Uconnect kept showing our last frame until it got Stop.
-            send(MSG_MEDIA_STOP, Protobuf.varintField(1, SESSION_ID.toLong()), encrypted = true, channel = videoChannelId)
+            videoWindow.stop()
+            send(MSG_MEDIA_STOP, byteArrayOf(), encrypted = true, channel = videoChannelId)
             log.i("the car is showing its own screen - video stopped, audio carries on")
         }
     }
 
+    private fun beginVideoStream(index: Int) {
+        // The encoder's sync-frame request is asynchronous. A restarted decoder cannot consume
+        // dependent frames produced before that keyframe arrives.
+        awaitingVideoKeyFrame = true
+        videoSession++
+        videoWindow.start(videoSession, maxUnacked)
+        send(MSG_MEDIA_START, MediaProtocol.start(videoSession, index), encrypted = true, channel = videoChannelId)
+    }
+
     /** Android Auto's Exit: asks the car for its own interface, leaving the session running. */
-    private fun requestNativeFocus() {
-        if (!videoStarted) return
+    private fun requestNativeFocus(): Unit = synchronized(videoLock) {
+        if (stopped || !running || !videoStarted || videoChannelId < 0) return
         // VideoFocusRequestNotification { disp_channel_id = 1; mode = 2; reason = 3 }. The
         // display's channel is deprecated, but the 2018 Uconnect (protocol 1.3) predates that:
         // without it, it agreed to show its own screen and never did. LIVI ignores the field.
@@ -1077,6 +1167,7 @@ class GearslipRunner(
         // held each other up until something timed out, about two seconds a time.
         try {
             writer.execute {
+                if (channel in closedChannels) return@execute
                 try {
                     if (payload.size <= Frames.MAX_FRAME_PAYLOAD) {
                         val framePayload = if (encrypted) tls.encrypt(payload) else payload
@@ -1106,13 +1197,14 @@ class GearslipRunner(
                         splitMessages++
                     }
                     output.flush()
-                } catch (e: java.io.IOException) {
+                } catch (e: IOException) {
                     if (running) log.w("send failed, stopping: ${e.message}")
                     running = false
-                    videoSource?.stop()
+                    videoWindow.stop()
+                    runCatching { input.close() }
                 }
             }
-        } catch (e: java.util.concurrent.RejectedExecutionException) {
+        } catch (e: RejectedExecutionException) {
             // The session is over; nothing more goes out.
         }
     }
@@ -1228,6 +1320,7 @@ class GearslipRunner(
         const val MSG_BYEBYE_RESPONSE = 16
         const val MSG_CHANNEL_OPEN_REQUEST = 7
         const val MSG_CHANNEL_OPEN_RESPONSE = 8
+        const val MSG_CHANNEL_CLOSE_NOTIFICATION = 9
 
         // aap_protobuf/service/media/.../MediaMessageId
         const val MSG_MEDIA_DATA = 0
@@ -1257,15 +1350,12 @@ class GearslipRunner(
         const val VIDEO_FOCUS_NATIVE = 2
         const val VIDEO_FOCUS_PROJECTED_NO_INPUT = 4
         const val VIDEO_FOCUS_REASON_LAUNCH_NATIVE = 2
-        const val SESSION_ID = 1
         const val MSG_INPUT_REPORT = 32769
         const val MSG_KEY_BINDING_REQUEST = 32770
         const val MSG_KEY_BINDING_RESPONSE = 32771
         const val ACTION_DOWN = 0
         const val ACTION_UP = 1
 
-        const val ACK_STALL_MS = 2_000L
-        const val AUDIO_TRACE_MESSAGES = 6
         const val PERIODIC_KEYFRAME_MS = 5_000L
     }
 }
