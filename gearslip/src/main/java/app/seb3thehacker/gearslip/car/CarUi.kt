@@ -44,6 +44,10 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -166,7 +170,16 @@ fun CarUi() {
         }
     }
 
+    // The car screen is drawn on the phone, so every long press or text-handle drag would buzz
+    // the phone in its mount. Nobody feels that while driving; it's only noise.
+    val view = LocalView.current
+    DisposableEffect(view) {
+        view.isHapticFeedbackEnabled = false
+        onDispose { }
+    }
+
     CompositionLocalProvider(
+        LocalHapticFeedback provides NoHaptics,
         LocalDensity provides Density(base.density * scale, base.fontScale),
         LocalCarNavigator provides navigator,
         LocalDarkOutside provides darkOutside,
@@ -891,4 +904,9 @@ private fun ChargingGlyph(modifier: Modifier = Modifier, tint: Color = MaterialT
         }
         drawPath(bolt, tint)
     }
+}
+
+/** Stands in for the phone's vibration motor on the car screen: does nothing. */
+private object NoHaptics : HapticFeedback {
+    override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {}
 }
