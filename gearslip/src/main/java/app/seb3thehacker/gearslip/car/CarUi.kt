@@ -2,6 +2,7 @@ package app.seb3thehacker.gearslip.car
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -120,6 +121,8 @@ fun CarUi() {
             controlsWake.tick()
         }
     }
+    // The knob counts as a touch: the map's buttons can't be found while they're faded out.
+    LaunchedEffect(controlsWake) { CarKeys.focusMoves.collect { controlsWake.touch() } }
     remember(appContext) { Prefetch.warm(appContext, force = true); CarServices.init(appContext) }
     DisposableEffect(Unit) { onDispose { CarServices.shutdown() } }
     // Ask for the phone's sound as soon as the car connects, not only when a media app opens:
@@ -152,8 +155,12 @@ fun CarUi() {
                     VoiceReply.state.value.phase != VoiceReply.Phase.IDLE -> VoiceReply.cancel()
                     else -> navigator.back()
                 }
-                CarKeys.ScreenKey.HOME, CarKeys.ScreenKey.MAP -> navigator.home()
-                CarKeys.ScreenKey.MEDIA -> if (CarServices.mediaApp.value != null) navigator.media() else navigator.apps()
+                // Home is the dashboard, over the map, so Back from it lands on the map.
+                CarKeys.ScreenKey.HOME -> { navigator.home(); navigator.dashboard() }
+                CarKeys.ScreenKey.MAP -> navigator.home()
+                CarKeys.ScreenKey.MEDIA ->
+                    if (CarServices.mediaApp.value != null || CarServices.reopenLastMedia()) navigator.media()
+                    else navigator.apps()
                 CarKeys.ScreenKey.PHONE -> BuiltInApps.Phone.open(navigator)
             }
         }
@@ -167,6 +174,7 @@ fun CarUi() {
         LocalGsTheme provides GsThemes.byId(uiThemeId),
     ) {
         MaterialTheme(colorScheme = colors) {
+          CompositionLocalProvider(LocalIndication provides FocusRingIndication(MaterialTheme.colorScheme.primary)) {
             Surface(
                 Modifier
                     .fillMaxSize()
@@ -256,6 +264,7 @@ fun CarUi() {
                 if (safetyWarningSeen) CarWhatsNew()
                 }
             }
+          }
         }
     }
 }

@@ -3,6 +3,7 @@ package app.seb3thehacker.gearslip.car
 import app.seb3thehacker.gearslip.car.theme.*
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.luminance
@@ -233,7 +234,9 @@ internal fun RightEdgeControls(
     // the first touch on one wakes them rather than pressing it.
     val awake = LocalMapControlsWake.current.awake
     val pan by CarServices.nav.panMode.collectAsState()
-    val visible = awake || pan
+    // Kept up while the knob is on one of them, or the ring would fade out along with the button.
+    var holdsFocus by remember { mutableStateOf(false) }
+    val visible = awake || pan || holdsFocus
     val alpha by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
         animationSpec = androidx.compose.animation.core.tween(if (visible) 150 else 500),
@@ -242,6 +245,7 @@ internal fun RightEdgeControls(
     Column(
         modifier
             .alpha(alpha)
+            .onFocusChanged { holdsFocus = it.hasFocus }
             .let { base ->
                 if (visible) base else base.pointerInput(Unit) {
                     awaitPointerEventScope {

@@ -198,6 +198,12 @@ class ScreenProjector(private val context: Context) {
      */
     fun dispatchKey(keyCode: Int, down: Boolean) {
         val target = root ?: return
+        // Keys handed straight to the view skip the step where Android leaves touch mode, and in
+        // touch mode Compose's buttons refuse focus, so the knob had nothing to move between.
+        if (target.isInTouchMode) {
+            target.requestFocusFromTouch()
+            GearslipLog.i("keys: left touch mode for the knob/D-pad (now in touch mode: ${target.isInTouchMode})")
+        }
         // Nothing on the display takes keys until something in it holds focus.
         if (target.findFocus() == null) target.requestFocus()
         val shift = keyCode == app.seb3thehacker.gearslip.car.CarKeys.KEYCODE_SHIFT_TAB

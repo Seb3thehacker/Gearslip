@@ -27,6 +27,11 @@ object CarKeys {
     private val _screenKeys = MutableSharedFlow<ScreenKey>(extraBufferCapacity = 8)
     val screenKeys: SharedFlow<ScreenKey> = _screenKeys
 
+    private val _focusMoves = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
+    /** A knob turn or D-pad press, so controls that hide when left alone can come back. */
+    val focusMoves: SharedFlow<Unit> = _focusMoves
+
     /** Delivers an Android key event to the car display; set while the car UI is showing. */
     @Volatile var focusSink: ((keyCode: Int, down: Boolean) -> Unit)? = null
 
@@ -58,6 +63,7 @@ object CarKeys {
      */
     fun onKey(keyCode: Int, down: Boolean, longPress: Boolean): Boolean {
         if (keyCode in FOCUS_KEYS) {
+            _focusMoves.tryEmit(Unit)
             focusSink?.invoke(keyCode, down)
             return true
         }
@@ -86,6 +92,7 @@ object CarKeys {
     /** A turn of the rotary knob: each click moves focus one step, like Tab or Shift+Tab. */
     fun onRotate(delta: Int) {
         val sink = focusSink ?: return
+        _focusMoves.tryEmit(Unit)
         val code = if (delta > 0) KeyEvent.KEYCODE_TAB else KEYCODE_SHIFT_TAB
         repeat(kotlin.math.abs(delta).coerceAtMost(MAX_ROTARY_STEPS)) {
             sink(code, true)

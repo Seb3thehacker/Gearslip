@@ -127,6 +127,19 @@ object CarServices {
         if (CarSettings.pipeAudio.value) CarAudio.request()
     }
 
+    /**
+     * Reopens the media app used last, for the car's media button when nothing is open. False
+     * when there's none on record or it's been uninstalled since.
+     */
+    suspend fun reopenLastMedia(): Boolean {
+        val ctx = context ?: return false
+        val last = CarSettings.lastMedia.value?.let(ComponentName::unflattenFromString) ?: return false
+        val app = withContext(Dispatchers.IO) { MediaCatalog.installed(ctx) }
+            .firstOrNull { it.component == last } ?: return false
+        openMedia(app)
+        return true
+    }
+
     /** Closes the media app from the car: stops what it's playing and drops the connection. */
     fun closeMedia() {
         if (media.now.value.playing) media.togglePlay()
