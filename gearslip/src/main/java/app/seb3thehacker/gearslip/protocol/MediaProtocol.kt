@@ -3,7 +3,7 @@ package app.seb3thehacker.gearslip.protocol
 import app.seb3thehacker.gearslip.Protobuf
 import app.seb3thehacker.gearslip.Wire
 
-/** Media messages shared by the DHU's audio and video sinks. */
+/** Projection media messages shared by audio and video sinks. */
 internal object MediaProtocol {
     const val DATA = 0
     const val CODEC_CONFIG = 1
@@ -16,6 +16,7 @@ internal object MediaProtocol {
     const val MICROPHONE_RESPONSE = 0x8006
     const val UNEXPECTED_MESSAGE = 0xff
     const val READY = 2
+    const val MAX_ACK_COUNT = 4096
 
     data class Config(val status: Int, val maxUnacked: Int, val indices: List<Int>)
     data class Ack(val session: Int, val count: Long)
@@ -39,8 +40,10 @@ internal object MediaProtocol {
     fun ack(body: ByteArray): Ack? {
         val fields = Wire.fields(body)
         val session = Wire.varint(fields, 1)?.toInt() ?: return null
-        val count = Wire.varint(fields, 2) ?: return null
-        if (count !in 0..0xffff_ffffL) return null
+        // Android Auto uses the receiver's timestamp list when present, even if count differs.
+        val timestamps = Wire.repeatedLongs(fields, 3) ?: return null
+        val count = if (timestamps.isNotEmpty()) timestamps.size.toLong() else Wire.varint(fields, 2) ?: 0
+        if (count !in 1..MAX_ACK_COUNT.toLong()) return null
         return Ack(session, count)
     }
 

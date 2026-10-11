@@ -145,15 +145,19 @@ object Wire {
         fields.filter { it.number == number && it.wireType == 2 }.mapNotNull { it.bytes }
 
     /** Protobuf readers accept both packed and unpacked repeated numeric fields. */
-    fun repeatedInts(fields: List<Field>, number: Int): List<Int> = buildList {
+    fun repeatedInts(fields: List<Field>, number: Int): List<Int> =
+        repeatedLongs(fields, number)?.map(Long::toInt).orEmpty()
+
+    /** Null means a packed field contained an incomplete or overflowing varint. */
+    fun repeatedLongs(fields: List<Field>, number: Int): List<Long>? = buildList {
         for (field in fields.filter { it.number == number }) {
-            if (field.wireType == 0) add(field.varint.toInt())
+            if (field.wireType == 0) add(field.varint)
             else if (field.wireType == 2) {
                 val bytes = field.bytes ?: continue
                 var position = 0
                 while (position < bytes.size) {
-                    val (value, next) = readVarint(bytes, position) ?: return emptyList()
-                    add(value.toInt())
+                    val (value, next) = readVarint(bytes, position) ?: return null
+                    add(value)
                     position = next
                 }
             }

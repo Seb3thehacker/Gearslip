@@ -24,23 +24,36 @@ import app.seb3thehacker.gearslip.Protobuf
  */
 class ClusterNav(
     val channelId: Int,
+    minimumIntervalMs: Long = 0,
     private val sendOnChannel: (messageId: Int, body: ByteArray) -> Unit,
 ) {
+    private val updateIntervalMs = maxOf(TICK_MS, minimumIntervalMs)
     @Volatile private var running = false
+    private var worker: Thread? = null
+    private var updatesRequested = true
     private var sentStatus = -1
     private var sentTurn: String? = null
     private var sentDistance: String? = null
 
+    @Synchronized
     fun onMessage(messageId: Int, body: ByteArray) {
         when (messageId) {
             MSG_CHANNEL_OPEN_RESPONSE -> {
-                val status = Protobuf.readInt32Field(body, 1) ?: 0
+                val status = Protobuf.readInt32Field(body, 1)
                 GearslipLog.i("cluster: <- ChannelOpenResponse: status=$status")
                 if (status == 0) start()
             }
-            // The car saying when it wants turns. Sending all along is harmless, so these are only logged.
-            MSG_START -> GearslipLog.i("cluster: <- start")
-            MSG_STOP -> GearslipLog.i("cluster: <- stop")
+            MSG_START -> {
+                updatesRequested = true
+                sentStatus = -1
+                sentTurn = null
+                sentDistance = null
+                GearslipLog.i("cluster: <- start")
+            }
+            MSG_STOP -> {
+                updatesRequested = false
+                GearslipLog.i("cluster: <- stop")
+            }
             else -> GearslipLog.i("cluster: <- unhandled message id=$messageId (${body.size} bytes)")
         }
     }
@@ -48,16 +61,23 @@ class ClusterNav(
     private fun start() {
         if (running) return
         running = true
-        Thread({
+        worker = Thread({
             while (running) {
                 runCatching { tick() }.onFailure { GearslipLog.w("cluster: ${it.message}") }
-                Thread.sleep(TICK_MS)
+                try {
+                    Thread.sleep(updateIntervalMs)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
             }
-        }, "gearslip-cluster").start()
+        }, "gearslip-cluster").also { it.start() }
     }
 
+    @Synchronized
     fun stop() {
         running = false
+        worker?.interrupt()
+        worker = null
     }
 
     /** One turn as the car wants it, from whichever source the map app fills. */
@@ -75,7 +95,9 @@ class ClusterNav(
         return Turn(step, info.currentDistance, null, info.isLoading)
     }
 
+    @Synchronized
     private fun tick() {
+        if (!running || !updatesRequested) return
         val turn = current()
         val status = when {
             turn == null -> STATUS_INACTIVE
@@ -97,7 +119,7 @@ class ClusterNav(
         val maneuver = step.maneuver
         val (event, side) = maneuver?.let { eventFor(it.type) } ?: (EVENT_UNKNOWN to SIDE_UNSPECIFIED)
         val road = step.road.text().ifBlank { step.cue.text() }
-        val key = "$road|$event|$side|${maneuver?.roundaboutExitNumber}"
+        val key = "$road|$event|$side|${maneuver?.roundaboutExitNumber}|${maneuver?.roundaboutExitAngle}"
         if (key == sentTurn) return
         sentTurn = key
         var body = Protobuf.stringField(1, road) +

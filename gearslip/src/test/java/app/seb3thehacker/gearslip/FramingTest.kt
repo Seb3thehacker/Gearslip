@@ -29,11 +29,47 @@ class FramingTest {
         val first = parser.next()!!
         val last = parser.next()!!
         assertEquals(20_000, first.totalSize)
-        assertEquals(16_385, first.payload.size)
+        assertEquals(16_121, first.payload.size)
         assertEquals(Frames.TYPE_LAST, last.frameType)
         val assembler = Frames.Assembler()
         assertNull(assembler.offer(first, first.payload.drop(1).toByteArray()))
         assertArrayEquals(message, assembler.offer(last, last.payload.drop(1).toByteArray()))
+    }
+
+    @Test fun `fragment budget includes the short or extended header`() {
+        for (size in listOf(16_124, 16_125, 32_245)) {
+            val output = ByteArrayOutputStream()
+            Frames.writeMessage(output, 1, false, Frames.MESSAGE_SPECIFIC, ByteArray(size)) { error("plaintext") }
+            val parser = Frames.Parser()
+            parser.append(output.toByteArray(), output.size())
+            val first = parser.next()!!
+            if (size == 16_124) {
+                assertEquals(Frames.TYPE_BULK, first.frameType)
+                assertEquals(16_124, first.payload.size)
+            } else {
+                assertEquals(Frames.TYPE_FIRST, first.frameType)
+                assertEquals(size, first.totalSize)
+                assertEquals(16_120, first.payload.size)
+                val next = parser.next()!!
+                if (size == 32_245) {
+                    assertEquals(Frames.TYPE_MIDDLE, next.frameType)
+                    assertEquals(16_124, next.payload.size)
+                    val last = parser.next()!!
+                    assertEquals(Frames.TYPE_LAST, last.frameType)
+                    assertEquals(1, last.payload.size)
+                } else {
+                    assertEquals(Frames.TYPE_LAST, next.frameType)
+                    assertEquals(5, next.payload.size)
+                }
+            }
+            assertNull(parser.next())
+        }
+    }
+
+    @Test fun `channel control messages cannot be fragmented`() {
+        assertThrows(IllegalArgumentException::class.java) {
+            Frames.writeMessage(ByteArrayOutputStream(), 1, false, Frames.MESSAGE_CONTROL, ByteArray(16_125)) { it }
+        }
     }
 
     @Test fun `malformed and mismatched fragment runs are rejected`() {

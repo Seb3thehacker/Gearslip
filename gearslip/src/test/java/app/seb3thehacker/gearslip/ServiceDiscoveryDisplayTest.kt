@@ -1,6 +1,8 @@
 package app.seb3thehacker.gearslip
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -12,6 +14,50 @@ import org.junit.Test
  * Taking the first input service left every touch on the main screen ignored.
  */
 class ServiceDiscoveryDisplayTest {
+
+    @Test fun `omitted video resolution and frame rate use protocol defaults`() {
+        val response = lenField(1, varintField(1, 1) + lenField(3, lenField(4, byteArrayOf())))
+        val config = ServiceDiscovery.findVideoService(response)!!.configs.single()
+        assertEquals(1, config.resolution)
+        assertEquals(1, config.frameRate)
+        assertEquals(800 to 480, config.pixelSize())
+    }
+
+    @Test fun `video uses per-config codec and preserves configuration indices`() {
+        val h265 = varintField(5, 160) + varintField(10, 7)
+        val h264 = varintField(5, 160) + varintField(10, 3)
+        val legacy = varintField(5, 160)
+        val sink = varintField(1, 1) + lenField(4, h265) + lenField(4, h264) + lenField(4, legacy)
+        val response = lenField(1, varintField(1, 3) + lenField(3, sink))
+        val video = ServiceDiscovery.findVideoService(response)!!
+        // A default PCM value at the old service level must not reject the video channel.
+        assertEquals(listOf(7, 3, 3), video.configs.map { it.codecType })
+        assertEquals(3, video.configs.size)
+        assertEquals(listOf(1, 2), video.configs.indices.filter { video.configs[it].isSupportedH264() })
+    }
+
+    @Test fun `invalid video geometry and density cannot be selected`() {
+        val valid = ServiceDiscovery.VideoConfig(1, 1, 160)
+        assertTrue(valid.isSupportedH264())
+        val invalid = listOf(
+            ServiceDiscovery.VideoConfig(99, 1, 160),
+            ServiceDiscovery.VideoConfig(1, 0, 160),
+            ServiceDiscovery.VideoConfig(1, 3, 160),
+            ServiceDiscovery.VideoConfig(1, 1, 0),
+            ServiceDiscovery.VideoConfig(1, 1, -1),
+            ServiceDiscovery.VideoConfig(1, 1, 160, widthMargin = -1),
+            ServiceDiscovery.VideoConfig(1, 1, 160, widthMargin = 800),
+            ServiceDiscovery.VideoConfig(1, 1, 160, heightMargin = -1),
+            ServiceDiscovery.VideoConfig(1, 1, 160, heightMargin = 480),
+        )
+        invalid.forEach { assertFalse(it.toString(), it.isSupportedH264()) }
+    }
+
+    @Test fun `odd video margins match Android Auto crop edges`() {
+        val config = ServiceDiscovery.VideoConfig(1, 1, 160, widthMargin = 3, heightMargin = 5)
+        assertEquals(Insets(left = 1, right = 2, top = 3, bottom = 2), config.marginInsets())
+        assertEquals(797 to 475, config.visibleSize())
+    }
 
     private fun varintField(field: Int, value: Long) = Protobuf.varintField(field, value)
 

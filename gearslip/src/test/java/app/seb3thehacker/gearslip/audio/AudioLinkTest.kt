@@ -78,4 +78,20 @@ class AudioLinkTest {
         }
         assertEquals(3, messages.count { it.first == MediaProtocol.DATA })
     }
+
+    @Test fun `media-only focus starts media while guidance-only focus stops it`() {
+        link.onMessage(MediaProtocol.CONFIG, ready)
+        link.start()
+        link.onFocus(6)
+        assertEquals(MediaProtocol.START, messages.single().first)
+        link.write(byteArrayOf(1, 2, 3, 4), 4)
+        assertEquals(MediaProtocol.DATA, messages.last().first)
+        link.onFocus(7)
+        assertEquals(MediaProtocol.STOP, messages.last().first)
+        val stoppedCount = messages.size
+        link.write(byteArrayOf(1, 2, 3, 4), 4)
+        assertEquals(stoppedCount, messages.size)
+        link.onFocus(6)
+        assertEquals(MediaProtocol.START, messages.last().first)
+    }
 }

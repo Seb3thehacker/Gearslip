@@ -3,7 +3,5 @@
     <application>
         <!-- Debug builds only: renders the car UI to PNGs so it can be checked without a car. -->
         <activity android:name="app.seb3thehacker.gearslip.CarPreviewActivity" android:exported="true" />
-        <activity android:name="app.seb3thehacker.gearslip.DhuProtocolActivity"
-            android:permission="android.permission.DUMP" android:exported="true" />
     </application>
 </manifest>

@@ -55,4 +55,22 @@ class MediaWindowTest {
         assertFalse(window.reserve(1))
         assertEquals(0, window.inFlight)
     }
+
+    @Test fun `truncated head unit session IDs release credit after session 255`() {
+        val window = MediaWindow()
+        window.start(257, 1)
+        assertTrue(window.reserve(257))
+        assertFalse(window.acknowledge(MediaProtocol.Ack(0, 1)))
+        assertTrue(window.acknowledge(MediaProtocol.Ack(1, 1)))
+        assertEquals(0, window.inFlight)
+        assertFalse(window.reserve(1))
+    }
+
+    @Test fun `negative acknowledgement cannot increase outstanding credit`() {
+        val window = MediaWindow()
+        window.start(1, 1)
+        window.reserve(1)
+        assertFalse(window.acknowledge(MediaProtocol.Ack(1, -1)))
+        assertEquals(1, window.inFlight)
+    }
 }

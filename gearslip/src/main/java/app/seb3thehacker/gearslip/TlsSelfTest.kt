@@ -4,33 +4,25 @@ import java.net.Socket
 import java.nio.ByteBuffer
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
+import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
 import javax.net.ssl.SSLEngineResult
 import javax.net.ssl.SSLEngineResult.HandshakeStatus
 import javax.net.ssl.X509ExtendedTrustManager
 
-/**
- * Runs [PhoneTls] against an in-process TLS client and checks that a full handshake plus a
- * data round trip works.
- *
- * This exists because of one specific hazard: a bug in the certificate, the key manager or
- * the engine wiring produces a dead connection in the car that is indistinguishable from a
- * head unit rejecting us - and the whole point of the spike is a trustworthy go/no-go
- * signal. Run this on the bench first; if it passes, a failure in the car is about the head
- * unit, not about this code.
- */
+/** Checks mutual TLS and an encrypted data round trip with an in-process head-unit peer. */
 object TlsSelfTest {
     private val log = GearslipLog.tagged("TLS")
 
-    fun run(identity: CertProvider.Identity): Boolean {
+    fun run(identity: CertProvider.Identity, withClientCertificate: Boolean = true): Boolean {
         log.i("=== TLS self-test starting ===")
         log.i("cert source: ${identity.source}")
         log.i("  subject = ${identity.certificate.subjectX500Principal}")
         log.i("  issuer  = ${identity.certificate.issuerX500Principal}")
         return try {
             val server = PhoneTls(identity.keyStore, identity.password)
-            val client = Driver(clientEngine())
+            val client = Driver(clientEngine(withClientCertificate))
 
             var outbound = client.pump(null) // ClientHello
             var rounds = 0
@@ -49,8 +41,7 @@ object TlsSelfTest {
                 return false
             }
 
-            // Data round trip, exercising the same encrypt path the spike uses for
-            // ServiceDiscoveryRequest.
+            // Exercise the same encrypt path used by ServiceDiscoveryRequest.
             val plaintext = "gearslip round trip".toByteArray()
             val decrypted = client.decrypt(server.encrypt(plaintext))
             if (!decrypted.contentEquals(plaintext)) {
@@ -66,9 +57,15 @@ object TlsSelfTest {
         }
     }
 
-    private fun clientEngine(): SSLEngine {
+    private fun clientEngine(withCertificate: Boolean): SSLEngine {
         val context = SSLContext.getInstance("TLSv1.2")
-        context.init(null, arrayOf(TrustAll()), SecureRandom())
+        val keyManagers = if (withCertificate) {
+            val client = SelfSignedCert.generate(commonName = "Self-test head unit")
+            KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm()).apply {
+                init(client.keyStore, SelfSignedCert.PASSWORD)
+            }.keyManagers
+        } else null
+        context.init(keyManagers, arrayOf(TrustAll()), SecureRandom())
         return context.createSSLEngine().apply {
             useClientMode = true
             enabledProtocols = arrayOf("TLSv1.2")

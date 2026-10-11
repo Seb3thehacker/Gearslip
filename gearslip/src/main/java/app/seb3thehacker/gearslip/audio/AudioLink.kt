@@ -89,7 +89,8 @@ class AudioLink(
     @Synchronized
     fun onFocus(state: Int) {
         if (closed || !focusRequested) return
-        focusGranted = state == FOCUS_STATE_GAIN || state == FOCUS_STATE_GAIN_TRANSIENT
+        focusGranted = state == FOCUS_STATE_GAIN || state == FOCUS_STATE_GAIN_TRANSIENT ||
+            state == FOCUS_STATE_GAIN_MEDIA_ONLY
         if (focusGranted) startStream() else stopStream()
     }
 
@@ -157,6 +158,7 @@ class AudioLink(
         private const val FOCUS_RELEASE = 4
         private const val FOCUS_STATE_GAIN = 1
         private const val FOCUS_STATE_GAIN_TRANSIENT = 2
+        private const val FOCUS_STATE_GAIN_MEDIA_ONLY = 6
     }
 }
 

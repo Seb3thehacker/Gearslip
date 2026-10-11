@@ -1,3 +1,0 @@
-<resources>
-    <string name="dhu_protocol_test_status" translatable="false">DHU protocol test — listening on localhost:5277</string>
-</resources>

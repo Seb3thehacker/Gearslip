@@ -1,6 +1,6 @@
 package app.seb3thehacker.gearslip
 
-/** The DHU 2.0 receiver offers projection protocol 1.7; older 1.x peers negotiate their minor. */
+/** Advertises our supported 1.x version, as Android Auto does for older head units. */
 internal object ProtocolVersion {
     data class Response(val major: Int, val minor: Int, val supported: Boolean) {
         val bytes: ByteArray get() = byteArrayOf(
@@ -9,5 +9,5 @@ internal object ProtocolVersion {
         )
     }
 
-    fun respond(major: Int, minor: Int): Response = Response(1, minOf(minor, 7), major == 1)
+    fun respond(major: Int, minor: Int): Response = Response(1, 7, major == 1 && minor in 0..0xffff)
 }

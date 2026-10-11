@@ -131,10 +131,20 @@ class ServiceDiscoveryAudioTest {
         assertNull(ServiceDiscovery.pickMediaSink(ServiceDiscovery.findAudioServices(response)))
     }
 
+    @Test fun `omitted audio codec defaults to PCM and stream type to guidance`() {
+        val sink = lenField(3, audioConfig(48_000, 16, 2))
+        val response = lenField(1, varintField(1, 5) + lenField(3, sink))
+        val audio = ServiceDiscovery.findAudioServices(response).single()
+        assertEquals(1, audio.codecType)
+        assertEquals(1, audio.streamType)
+        val mediaResponse = lenField(1, varintField(1, 5) + lenField(3, sink + varintField(2, 3)))
+        assertNotNull(ServiceDiscovery.pickMediaSink(ServiceDiscovery.findAudioServices(mediaResponse)))
+    }
+
     @Test fun `omitted video codec uses the DHU H264 default`() {
         val config = varintField(1, 1) + varintField(2, 2) + varintField(5, 160)
         val response = lenField(1, varintField(1, 2) + lenField(3, lenField(4, config)))
-        assertEquals(3, ServiceDiscovery.findVideoService(response)!!.codecType)
+        assertEquals(3, ServiceDiscovery.findVideoService(response)!!.configs.single().codecType)
     }
 
 }

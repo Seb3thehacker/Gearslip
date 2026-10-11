@@ -31,6 +31,7 @@ object ServiceDiscovery {
         val density: Int,
         val widthMargin: Int = 0,
         val heightMargin: Int = 0,
+        val codecType: Int = CODEC_H264_BP,
     ) {
         val resolutionName: String get() = RESOLUTIONS[resolution] ?: "unknown($resolution)"
         val frameRateName: String get() = if (frameRate == 1) "60fps" else "30fps"
@@ -43,9 +44,16 @@ object ServiceDiscovery {
         /** What's left on the car's screen once the margins are cropped off. */
         fun visibleSize(): Pair<Int, Int>? = pixelSize()?.let { (w, h) -> (w - widthMargin) to (h - heightMargin) }
 
+        /** Keep discovery indices intact while excluding formats the encoder cannot produce. */
+        fun isSupportedH264(): Boolean {
+            val (width, height) = pixelSize() ?: return false
+            return codecType == CODEC_H264_BP && frameRate in 1..2 && density > 0 &&
+                widthMargin in 0 until width && heightMargin in 0 until height
+        }
+
         /** The margins as the strips of the frame the car UI keeps clear. */
         fun marginInsets(): Insets = Insets(
-            top = heightMargin / 2, bottom = heightMargin - heightMargin / 2,
+            top = heightMargin - heightMargin / 2, bottom = heightMargin / 2,
             left = widthMargin / 2, right = widthMargin - widthMargin / 2,
         )
 
@@ -54,9 +62,7 @@ object ServiceDiscovery {
     }
 
     /** [displayId] is MediaSinkService field 6: 0, the default, is the main screen. */
-    class VideoService(val serviceId: Int, val codecType: Int, val configs: List<VideoConfig>, val displayId: Int = 0) {
-        val codecName: String get() = CODECS[codecType] ?: "unknown($codecType)"
-    }
+    class VideoService(val serviceId: Int, val configs: List<VideoConfig>, val displayId: Int = 0)
 
     class AudioConfig(val sampleRate: Int, val bits: Int, val channels: Int)
 
@@ -78,7 +84,7 @@ object ServiceDiscovery {
     fun findAudioServices(response: ByteArray): List<AudioService> = buildList {
         for (channel in Wire.allBytes(Wire.fields(response), 1)) {
             val service = Wire.fields(channel)
-            val id = Wire.varint(service, 1)?.toInt() ?: continue
+            val id = serviceId(service) ?: continue
             val sink = Wire.bytes(service, 3) ?: continue
             val sinkFields = Wire.fields(sink)
             val audioConfigs = Wire.allBytes(sinkFields, 3)
@@ -86,8 +92,8 @@ object ServiceDiscovery {
             add(
                 AudioService(
                     serviceId = id,
-                    streamType = Wire.varint(sinkFields, 2)?.toInt() ?: 0,
-                    codecType = Wire.varint(sinkFields, 1)?.toInt() ?: CODEC_H264_BP,
+                    streamType = Wire.varint(sinkFields, 2)?.toInt() ?: 1,
+                    codecType = Wire.varint(sinkFields, 1)?.toInt() ?: CODEC_PCM,
                     configs = audioConfigs.map {
                         val f = Wire.fields(it)
                         AudioConfig(
@@ -117,13 +123,26 @@ object ServiceDiscovery {
      */
     fun findMediaStatusChannel(response: ByteArray): Int? = findChannelWith(response, 9)
 
-    /** The instrument cluster's turn-by-turn channel (NavigationStatusService, Service field 8). */
-    fun findNavStatusChannel(response: ByteArray): Int? = findChannelWith(response, 8)
+    class NavStatusService(val serviceId: Int, val minimumIntervalMs: Int)
+
+    /** The cluster advertises its minimum update interval in NavigationStatusService field 1. */
+    fun findNavStatusService(response: ByteArray): NavStatusService? =
+        Wire.allBytes(Wire.fields(response), 1).firstNotNullOfOrNull { channel ->
+            val service = Wire.fields(channel)
+            val id = serviceId(service) ?: return@firstNotNullOfOrNull null
+            val navigation = Wire.bytes(service, 8) ?: return@firstNotNullOfOrNull null
+            val interval = Wire.varint(Wire.fields(navigation), 1) ?: return@firstNotNullOfOrNull null
+            if (interval !in 0L..Int.MAX_VALUE.toLong()) return@firstNotNullOfOrNull null
+            NavStatusService(id, interval.toInt())
+        }
+
+    private fun serviceId(fields: List<Wire.Field>): Int? =
+        Wire.varint(fields, 1)?.takeIf { it in 1L..255L }?.toInt()
 
     private fun findChannelWith(response: ByteArray, serviceField: Int): Int? =
         Wire.allBytes(Wire.fields(response), 1).firstNotNullOfOrNull { channel ->
             val service = Wire.fields(channel)
-            if (service.any { it.number == serviceField }) Wire.varint(service, 1)?.toInt() else null
+            if (Wire.bytes(service, serviceField) != null) serviceId(service) else null
         }
 
     /**
@@ -135,7 +154,7 @@ object ServiceDiscovery {
     fun findMicService(response: ByteArray): AudioService? {
         for (channel in Wire.allBytes(Wire.fields(response), 1)) {
             val service = Wire.fields(channel)
-            val id = Wire.varint(service, 1)?.toInt() ?: continue
+            val id = serviceId(service) ?: continue
             val source = Wire.fields(Wire.bytes(service, 5) ?: continue)
             val f = Wire.fields(Wire.bytes(source, 2) ?: continue)
             return AudioService(
@@ -180,8 +199,8 @@ object ServiceDiscovery {
      *                         repeated TouchScreen touchscreen = 2; ... }
      *   TouchScreen { required int32 width = 1; required int32 height = 2; type = 3; }
      *
-     * Touch coordinates arrive in this space (1258x708 on the 2018 Uconnect) and must be
-     * scaled to the projected video size before injection. [keycodesSupported] is what the
+     * Touch reports use projected video coordinates; these dimensions describe the input
+     * hardware and help select a video configuration. [keycodesSupported] is what the
      * head unit says it will actually send over the Input channel as key events (steering-wheel
      * buttons, etc.) - not every unit reports the same set, so it's kept for diagnostics and to
      * know ahead of time whether a button like voice/PTT is even wired up on this hardware.
@@ -210,7 +229,7 @@ object ServiceDiscovery {
     private fun inputServices(response: ByteArray): List<InputService> = buildList {
         for (channel in Wire.allBytes(Wire.fields(response), 1)) {
             val service = Wire.fields(channel)
-            val id = Wire.varint(service, 1)?.toInt() ?: continue
+            val id = serviceId(service) ?: continue
             val input = Wire.bytes(service, 4) ?: continue
             val inputFields = Wire.fields(input)
             // A unit with only a knob and buttons has no touchscreen entry; it still has keys.
@@ -234,25 +253,27 @@ object ServiceDiscovery {
     private fun videoServices(response: ByteArray): List<VideoService> = buildList {
         for (channel in Wire.allBytes(Wire.fields(response), 1)) {
             val service = Wire.fields(channel)
-            val id = Wire.varint(service, 1)?.toInt() ?: continue
+            val id = serviceId(service) ?: continue
             val sink = Wire.bytes(service, 3) ?: continue
 
             val sinkFields = Wire.fields(sink)
             val videoConfigs = Wire.allBytes(sinkFields, 4)
             if (videoConfigs.isEmpty()) continue // audio sink, not video
 
-            val codecType = Wire.varint(sinkFields, 1)?.toInt() ?: CODEC_H264_BP
+            // The legacy service-level codec describes audio. Android Auto negotiates video
+            // from VideoConfiguration.codec_type (field 10), with H.264 for older receivers.
             val configs = videoConfigs.map {
                 val f = Wire.fields(it)
                 VideoConfig(
-                    resolution = Wire.varint(f, 1)?.toInt() ?: 0,
-                    frameRate = Wire.varint(f, 2)?.toInt() ?: 0,
+                    resolution = Wire.varint(f, 1)?.toInt() ?: 1,
+                    frameRate = Wire.varint(f, 2)?.toInt() ?: 1,
                     density = Wire.varint(f, 5)?.toInt() ?: 0,
                     widthMargin = Wire.varint(f, 3)?.toInt() ?: 0,
                     heightMargin = Wire.varint(f, 4)?.toInt() ?: 0,
+                    codecType = Wire.varint(f, 10)?.toInt() ?: CODEC_H264_BP,
                 )
             }
-            add(VideoService(id, codecType, configs, Wire.varint(sinkFields, 6)?.toInt() ?: 0))
+            add(VideoService(id, configs, Wire.varint(sinkFields, 6)?.toInt() ?: 0))
         }
     }
 
@@ -261,16 +282,15 @@ object ServiceDiscovery {
      *   SensorSourceService { repeated Sensor sensors = 1; }
      *   Sensor { required SensorType sensor_type = 1; }
      *
-     * Field numbers for what actually rides inside each SensorEvent once subscribed are not
-     * pinned down here - unlike video/audio/input, there's no independent source to check them
-     * against, so [CarSensors] shows the raw decode instead of trusting a guessed field map.
+     * SensorBatch contains repeated messages in fields 1 through 22 matching these type ids.
+     * The vehicle data screen keeps their raw contents for diagnostics.
      */
     class SensorService(val serviceId: Int, val types: List<Int>)
 
     fun findSensorService(response: ByteArray): SensorService? {
         for (channel in Wire.allBytes(Wire.fields(response), 1)) {
             val service = Wire.fields(channel)
-            val id = Wire.varint(service, 1)?.toInt() ?: continue
+            val id = serviceId(service) ?: continue
             val sensorSource = Wire.bytes(service, 2) ?: continue
             val types = Wire.allBytes(Wire.fields(sensorSource), 1).mapNotNull {
                 Wire.varint(Wire.fields(it), 1)?.toInt()

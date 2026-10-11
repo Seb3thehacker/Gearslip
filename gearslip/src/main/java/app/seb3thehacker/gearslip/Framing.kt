@@ -4,7 +4,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.OutputStream
 
-/** Android Auto framing, checked against DHU 2.0 ChannelManager and Channel reassembly. */
+/** Android Auto framing with plaintext fragmentation before per-frame encryption. */
 object Frames {
 
     const val CHANNEL_CONTROL = 0
@@ -26,8 +26,11 @@ object Frames {
     const val MESSAGE_SPECIFIC = 0
     const val MESSAGE_CONTROL = 1 shl 2
 
-    /** Maximum plaintext chunk; encryption adds its TLS record overhead. */
-    const val MAX_FRAME_PAYLOAD = 0x4000
+    // Android Auto's default fragment budget includes the framing header. TLS adds overhead.
+    private const val FRAGMENT_SIZE = 0x3f00
+    private const val HEADER_SIZE = 4
+    private const val FIRST_HEADER_SIZE = 8
+    const val MAX_FRAME_PAYLOAD = FRAGMENT_SIZE - HEADER_SIZE
 
     class Frame(
         val channel: Int,
@@ -83,13 +86,17 @@ object Frames {
         encrypt: (ByteArray) -> ByteArray,
     ): Int {
         require(message.size in 2..MAX_MESSAGE_SIZE)
+        val fragmented = message.size > FRAGMENT_SIZE - HEADER_SIZE
+        require(messageType != MESSAGE_CONTROL || !fragmented) { "Channel control messages cannot be fragmented" }
         var offset = 0
         var frames = 0
         while (offset < message.size) {
-            val end = minOf(offset + MAX_FRAME_PAYLOAD, message.size)
+            val first = fragmented && offset == 0
+            val headerSize = if (first) FIRST_HEADER_SIZE else HEADER_SIZE
+            val end = minOf(offset + FRAGMENT_SIZE - headerSize, message.size)
             val type = when {
-                message.size <= MAX_FRAME_PAYLOAD -> TYPE_BULK
-                offset == 0 -> TYPE_FIRST
+                !fragmented -> TYPE_BULK
+                first -> TYPE_FIRST
                 end == message.size -> TYPE_LAST
                 else -> TYPE_MIDDLE
             }

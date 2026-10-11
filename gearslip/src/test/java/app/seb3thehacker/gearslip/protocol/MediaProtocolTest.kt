@@ -26,11 +26,35 @@ class MediaProtocolTest {
         }
     }
 
-    @Test fun `ack requires both session and unsigned count`() {
+    @Test fun `ack requires session and a bounded positive packet count`() {
         assertNull(MediaProtocol.ack(byteArrayOf(16, 1)))
         assertNull(MediaProtocol.ack(byteArrayOf(8, 1)))
         assertNull(MediaProtocol.ack(Protobuf.varintField(1, 1) + Protobuf.varintField(2, -1)))
         assertEquals(MediaProtocol.Ack(7, 3), MediaProtocol.ack(byteArrayOf(8, 7, 16, 3)))
+        assertNull(MediaProtocol.ack(byteArrayOf(8, 1, 16, 0)))
+        assertEquals(MediaProtocol.Ack(1, 4096), MediaProtocol.ack(
+            Protobuf.varintField(1, 1) + Protobuf.varintField(2, 4096)))
+        assertNull(MediaProtocol.ack(Protobuf.varintField(1, 1) + Protobuf.varintField(2, 4097)))
+    }
+
+    @Test fun `timestamp acknowledgements take precedence over missing or inconsistent count`() {
+        val timestamps = Protobuf.varintField(3, 0x1_0000_0000L) + Protobuf.varintField(3, Long.MAX_VALUE)
+        for (count in listOf(byteArrayOf(), Protobuf.varintField(2, 0), Protobuf.varintField(2, 100))) {
+            val ack = Protobuf.varintField(1, 7) + count + timestamps
+            assertEquals(MediaProtocol.Ack(7, 2), MediaProtocol.ack(ack))
+        }
+    }
+
+    @Test fun `packed and mixed timestamp acknowledgements preserve each 64 bit value`() {
+        val packed = Protobuf.bytesField(3, Protobuf.varint(Long.MAX_VALUE) + Protobuf.varint(-1))
+        val body = Protobuf.varintField(1, 7) + packed + Protobuf.varintField(3, 0)
+        assertEquals(MediaProtocol.Ack(7, 3), MediaProtocol.ack(body))
+    }
+
+    @Test fun `malformed packed timestamps cannot release credit through the count fallback`() {
+        val body = Protobuf.varintField(1, 7) + Protobuf.varintField(2, 1) +
+            Protobuf.bytesField(3, byteArrayOf(0x80.toByte()))
+        assertNull(MediaProtocol.ack(body))
     }
 
     @Test fun `media timestamp uses all eight bytes in network order`() {

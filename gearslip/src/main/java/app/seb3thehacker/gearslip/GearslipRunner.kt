@@ -13,9 +13,11 @@ import app.seb3thehacker.gearslip.car.CarServices
 import app.seb3thehacker.gearslip.car.CarSettings
 import app.seb3thehacker.gearslip.protocol.MediaProtocol
 import app.seb3thehacker.gearslip.protocol.MediaWindow
+import app.seb3thehacker.gearslip.protocol.InputProtocol
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
@@ -57,9 +59,12 @@ class GearslipRunner(
     /** Waits for the certificate only when TLS is first needed; see [run]. */
     private val tls: PhoneTls by lazy { identityTask.get() }
     private var authenticationFailed = false
-    private var peerClosing = false
+    private var drainWriterOnExit = false
     private var resourcesReleased = false
     private val lifecycleLock = Any()
+    private val closedChannels = ConcurrentHashMap.newKeySet<Int>()
+    private val openingChannels = HashSet<Int>()
+    private val openedChannels = HashSet<Int>()
     @Volatile private var stopped = false
 
     @Volatile private var state = State.WAIT_VERSION
@@ -69,6 +74,7 @@ class GearslipRunner(
     @Volatile private var videoChannelId: Int = -1
     private var videoConfigs: List<ServiceDiscovery.VideoConfig> = emptyList()
     private var selectedConfigIndex: Int? = null
+    private var pendingVideoFocus: Int? = null
     private var vehicleProfile: VehicleProfile? = null
     @Volatile private var videoStarted = false
     private var videoSource: VideoSource? = null
@@ -144,7 +150,7 @@ class GearslipRunner(
         } finally {
             running = false
             writer.shutdown()
-            if (peerClosing) writer.awaitTermination(2, TimeUnit.SECONDS)
+            if (drainWriterOnExit) writer.awaitTermination(2, TimeUnit.SECONDS)
             writer.shutdownNow()
             releaseChannels()
             log.flush()
@@ -163,6 +169,7 @@ class GearslipRunner(
         val source = synchronized(lifecycleLock) {
             if (resourcesReleased) return
             resourcesReleased = true
+            videoInputAllowed = false
             CarFocus.request = null
             CarFocus.set(true)
             videoWindow.stop()
@@ -216,15 +223,11 @@ class GearslipRunner(
 
         if (frame.channel != Frames.CHANNEL_CONTROL) {
             if (state != State.DONE || !frame.encrypted) return
-            if (messageId == MSG_CHANNEL_OPEN_RESPONSE && frame.messageType != Frames.MESSAGE_CONTROL) return
-            if (frame.messageType == Frames.MESSAGE_CONTROL && messageId != MSG_CHANNEL_OPEN_RESPONSE) {
-                log.w("channel ${frame.channel}: unsupported channel control message $messageId")
-                return
-            }
-            onServiceMessage(frame.channel, messageId, body)
+            onServiceFrame(frame.channel, messageId, body, frame.messageType == Frames.MESSAGE_CONTROL)
             return
         }
-        if (messageId !in setOf(MSG_VERSION_REQUEST, MSG_ENCAPSULATED_SSL, MSG_AUTH_COMPLETE) &&
+        if (messageId !in setOf(MSG_VERSION_REQUEST, MSG_ENCAPSULATED_SSL, MSG_AUTH_COMPLETE,
+                MSG_BYEBYE_REQUEST, MSG_UNEXPECTED_MESSAGE, MSG_FRAMING_ERROR) &&
             (!frame.encrypted || state != State.DONE && state != State.WAIT_SDR)) return
 
         when (messageId) {
@@ -234,9 +237,82 @@ class GearslipRunner(
             MSG_SERVICE_DISCOVERY_RESPONSE -> onServiceDiscoveryResponse(body)
             MSG_PING_REQUEST -> onPingRequest(body)
             MSG_BYEBYE_REQUEST -> onByeByeRequest(body)
+            MSG_UNEXPECTED_MESSAGE, MSG_FRAMING_ERROR -> onProtocolError(messageId)
             AudioLink.MSG_FOCUS_RESPONSE -> audioLink?.onFocus(Protobuf.readInt32Field(body, 1) ?: 0)
             else -> log.i("unhandled control message id=$messageId (${body.size} bytes) - continuing")
         }
+    }
+
+    private fun onServiceFrame(channel: Int, messageId: Int, body: ByteArray, channelControl: Boolean) {
+        if (channel in closedChannels) return
+        if (channelControl) {
+            when (messageId) {
+                MSG_CHANNEL_CLOSE_NOTIFICATION -> {
+                    onChannelClosed(channel)
+                    return
+                }
+                MSG_CHANNEL_OPEN_RESPONSE -> {
+                    if (!openingChannels.remove(channel)) {
+                        log.w("ignoring unsolicited channel-open response on channel $channel")
+                        return
+                    }
+                    if (Protobuf.readInt32Field(body, 1) == 0) openedChannels.add(channel)
+                    else closedChannels.add(channel)
+                }
+                else -> return
+            }
+        } else if (channel !in openedChannels || messageId == MSG_CHANNEL_OPEN_RESPONSE ||
+            messageId == MSG_CHANNEL_CLOSE_NOTIFICATION) return
+        onServiceMessage(channel, messageId, body)
+    }
+
+    private fun onProtocolError(messageId: Int) {
+        val detail = if (messageId == MSG_FRAMING_ERROR) "framing error" else "unexpected message"
+        log.w("head unit terminated the protocol: $detail")
+        SessionReport.fail(SessionReport.Category.UNKNOWN, detail, state.name, "protocol $messageId")
+        SessionStatus.failed("Protocol error", "The head unit reported a $detail.")
+        running = false
+    }
+
+    private fun onChannelClosed(channel: Int) {
+        val source = synchronized(lifecycleLock) {
+            if (stopped || resourcesReleased || !closedChannels.add(channel)) return
+            openingChannels.remove(channel)
+            openedChannels.remove(channel)
+            log.i("head unit closed channel $channel")
+            when (channel) {
+                inputChannelId -> inputChannelId = -1
+                sensorChannelId -> {
+                    sensorChannelId = -1
+                    CarSensors.clear()
+                    lastSensorNight = null
+                    CarEnvironment.setSensorNight(null)
+                }
+                audioLink?.channelId -> { audioLink?.close(); audioLink = null }
+                CarMic.current?.channelId -> { CarMic.current?.close(); CarMic.current = null }
+                mediaStatus?.channelId -> { mediaStatus?.stop(); mediaStatus = null }
+                clusterNav?.channelId -> { clusterNav?.stop(); clusterNav = null }
+            }
+            if (channel != videoChannelId) return@synchronized null
+            synchronized(videoLock) {
+                videoWindow.stop()
+                videoProjected = false
+                videoInputAllowed = false
+                videoStarted = false
+                videoChannelId = -1
+                selectedConfigIndex = null
+                pendingVideoFocus = null
+                maxUnacked = 0
+            }
+            CarFocus.request = null
+            CarFocus.set(true)
+            val source = videoSource
+            videoSource = null
+            projection?.onProjectionStopped()
+            SessionStatus.failed("Video channel closed", "The head unit stopped accepting video.")
+            source
+        }
+        source?.stop()
     }
 
     private fun onServiceMessage(channel: Int, messageId: Int, body: ByteArray): Unit = synchronized(lifecycleLock) {
@@ -274,14 +350,17 @@ class GearslipRunner(
             3 -> "NOT_SUPPORTED"
             4 -> "NOT_CURRENTLY_SUPPORTED"
             5 -> "PROBE_SUPPORTED"
+            6 -> "WIRELESS_PROJECTION_DISABLED"
+            7 -> "POWER_DOWN"
+            8 -> "USER_PROFILE_SWITCH"
             else -> "unknown"
         }
         log.w("<- ByeByeRequest: reason=$reason ($name) in state $state")
         log.hex("   byebye raw", body)
         SessionReport.fail(SessionReport.Category.BYEBYE, "ByeByeRequest reason=$reason ($name)", state.name, "bye $reason")
-        send(MSG_BYEBYE_RESPONSE, ByteArray(0), encrypted = true)
+        send(MSG_BYEBYE_RESPONSE, ByteArray(0), encrypted = state == State.WAIT_SDR || state == State.DONE)
         log.i("-> ByeByeResponse")
-        peerClosing = true
+        drainWriterOnExit = true
         running = false
         SessionStatus.disconnected()
     }
@@ -302,6 +381,8 @@ class GearslipRunner(
         log.i("-> VersionResponse: ${response.major}.${response.minor}, supported=${response.supported}")
         if (!response.supported) {
             authenticationFailed = true
+            drainWriterOnExit = true
+            running = false
             SessionStatus.failed("Unsupported protocol", "The head unit requested protocol $major.$minor.")
             return
         }
@@ -321,17 +402,13 @@ class GearslipRunner(
             if (stopped) return
             log.e("TLS handshake threw", t)
             SessionReport.fail(SessionReport.Category.TLS, "handshake threw", t, state.name)
-            log.verdict(
-                "NOT VIABLE (TLS rejected)",
-                "The head unit aborted the TLS handshake. A bad_certificate / unknown_ca / " +
-                    "handshake_failure alert here means it validates the phone's certificate.",
-            )
             SessionStatus.failed(
-                "Head unit rejected the certificate",
-                "The head unit aborted the secure handshake. It validates the phone's certificate.",
+                "Secure connection failed",
+                "The secure handshake could not be completed. Check the session log for details.",
             )
             state = State.DONE
             authenticationFailed = true
+            running = false
             SessionReport.print()
             return
         }
@@ -348,7 +425,7 @@ class GearslipRunner(
 
     private fun onAuthComplete(body: ByteArray) {
         val status = Protobuf.readInt32Field(body, 1)
-        if (state != State.WAIT_AUTH && !(state == State.TLS_HANDSHAKE && status in listOf(-2, -3))) return
+        if (state != State.WAIT_AUTH && !(state == State.TLS_HANDSHAKE && status != null && status != 0)) return
         log.i("<- AuthComplete: status=$status")
         status?.let { SessionReport.auth(it) }
 
@@ -359,17 +436,17 @@ class GearslipRunner(
                 SessionStatus.connecting("Certificate accepted - discovering services")
                 sendServiceDiscoveryRequest()
             }
-            -2 -> {
-                SessionReport.fail(SessionReport.Category.CERTIFICATE, "AuthComplete status -2 (certificate error)", state.name, "auth -2")
-                log.verdict(
-                    "NOT VIABLE (STATUS_CERTIFICATE_ERROR)",
-                    "The head unit explicitly rejected the phone's self-signed certificate. " +
-                        "This is a definitive no - it validates the phone against a trust chain " +
-                        "we cannot issue from.",
-                )
+            -2, -23, -24 -> {
+                val reason = when (status) {
+                    -23 -> "The phone's certificate is not valid yet."
+                    -24 -> "The phone's certificate has expired."
+                    else -> "The head unit refused the phone's certificate."
+                }
+                SessionReport.fail(SessionReport.Category.CERTIFICATE, "AuthComplete status $status", state.name, "auth $status")
+                log.w("certificate rejected: $reason")
                 SessionStatus.failed(
                     "Head unit rejected the certificate",
-                    "The head unit refused the phone's certificate (certificate error).",
+                    reason,
                 )
                 state = State.DONE
                 authenticationFailed = true
@@ -400,6 +477,7 @@ class GearslipRunner(
                 authenticationFailed = true
             }
         }
+        if (authenticationFailed) running = false
     }
 
     private fun sendServiceDiscoveryRequest() {
@@ -462,12 +540,12 @@ class GearslipRunner(
         videoChannelId = video.serviceId
         videoConfigs = video.configs
 
-        log.i("video service: channel=${video.serviceId} codec=${video.codecName} display=${video.displayId}")
+        log.i("video service: channel=${video.serviceId} display=${video.displayId}")
         video.configs.forEachIndexed { index, config ->
             log.i("  config[$index] = $config")
         }
-        if (video.codecType != CODEC_H264_BP) {
-            log.w("head unit offers unsupported video codec ${video.codecName}")
+        if (video.configs.none { it.isSupportedH264() }) {
+            log.w("head unit offers no supported H.264 video configuration")
             SessionStatus.failed("Unsupported video codec", "This head unit does not offer H.264 video.")
             return
         }
@@ -549,12 +627,15 @@ class GearslipRunner(
 
     /** Turn-by-turn for the instrument cluster: the next turn, its road, and how far. */
     private fun startClusterNavChannel(serviceDiscoveryResponse: ByteArray) {
-        val channel = ServiceDiscovery.findNavStatusChannel(serviceDiscoveryResponse) ?: run {
+        val navigation = ServiceDiscovery.findNavStatusService(serviceDiscoveryResponse) ?: run {
             log.i("no navigation status channel - the cluster won't show turns")
             return
         }
+        val channel = navigation.serviceId
         log.i("navigation status channel: $channel")
-        clusterNav = ClusterNav(channel) { id, body -> send(id, body, encrypted = true, channel = channel) }
+        clusterNav = ClusterNav(channel, navigation.minimumIntervalMs.toLong()) { id, body ->
+            send(id, body, encrypted = true, channel = channel)
+        }
         openChannel(channel)
     }
 
@@ -610,7 +691,7 @@ class GearslipRunner(
      */
     private fun onNightSensor(body: ByteArray) {
         val night = Wire.bytes(Wire.fields(body), SENSOR_NIGHT) ?: return
-        val isNight = Wire.varint(Wire.fields(night), 1) == 1L
+        val isNight = (Wire.varint(Wire.fields(night), 1) ?: 0L) != 0L
         if (isNight != lastSensorNight) {
             lastSensorNight = isNight
             log.i("car says it's ${if (isNight) "night" else "day"}")
@@ -660,6 +741,8 @@ class GearslipRunner(
     }
 
     private fun openChannel(serviceId: Int) {
+        if (serviceId !in 1..255 || serviceId in closedChannels || serviceId in openedChannels ||
+            !openingChannels.add(serviceId)) return
         val request = Protobuf.varintField(1, 0L) +          // priority (sint32 zigzag: 0 -> 0)
             Protobuf.varintField(2, serviceId.toLong())      // service_id
         send(
@@ -701,32 +784,18 @@ class GearslipRunner(
 
     private fun onInputReport(body: ByteArray) {
         val report = Wire.fields(body)
-        // The 2018 Uconnect agrees to Exit but keeps showing our last frame and sending
-        // touches, which looked like a crash. A touch means our screen is still up there.
-        if (videoStarted && !videoProjected && Wire.bytes(report, 3) != null) {
-            log.w("the car said it took its screen back but still sends touches - showing ours again")
-            onVideoFocus(VIDEO_FOCUS_PROJECTED)
-        }
+        if (Wire.varint(report, 1) == null) return
+        if (!videoInputAllowed) return
         Wire.bytes(report, 4)?.let(::onKeyEvent)
         Wire.bytes(report, 6)?.let(::onRelativeEvent)
-        val touch = Wire.bytes(report, 3) ?: Wire.bytes(report, 7)
+        // Touchpads (field 7) need a separate gesture pipeline; their coordinates are not
+        // positions on the projected screen.
+        val touch = Wire.bytes(report, 3)
         if (touch == null) {
             return
         }
-        val touchFields = Wire.fields(touch)
-        val action = Wire.varint(touchFields, 3)?.toInt() ?: 0
-        val pointers = Wire.allBytes(touchFields, 1)
-        if (pointers.isEmpty()) return
         val size = videoConfigs.getOrNull(selectedConfigIndex ?: 0)?.pixelSize()
-        val points = pointers.mapIndexedNotNull { index, pointer ->
-            val fields = Wire.fields(pointer)
-            val rawX = Wire.varint(fields, 1)?.toInt() ?: return@mapIndexedNotNull null
-            val rawY = Wire.varint(fields, 2)?.toInt() ?: return@mapIndexedNotNull null
-            val id = Wire.varint(fields, 3)?.toInt() ?: index
-            TouchPoint(id, clamp(rawX, size?.first), clamp(rawY, size?.second))
-        }
-        if (points.isEmpty()) return
-        val actionIndex = (Wire.varint(touchFields, 2)?.toInt() ?: 0).coerceIn(0, points.size - 1)
+        val (action, actionIndex, points) = InputProtocol.touch(touch, size) ?: return
         if (points.size > 1 && touchesSeen < 3) {
             log.i("multi-touch: ${points.size} pointers, action=$action index=$actionIndex")
         }
@@ -767,8 +836,9 @@ class GearslipRunner(
         for (key in Wire.allBytes(Wire.fields(keyEvent), 1)) {
             val fields = Wire.fields(key)
             val keycode = Wire.varint(fields, 1)?.toInt() ?: continue
-            val down = Wire.varint(fields, 2) == 1L
-            val longPress = Wire.varint(fields, 4) == 1L
+            val down = (Wire.varint(fields, 2) ?: continue) != 0L
+            if (Wire.varint(fields, 3) == null) continue
+            val longPress = (Wire.varint(fields, 4) ?: 0L) != 0L
             log.i("<- key event: keycode=$keycode ${if (down) "down" else "up"}${if (longPress) " long" else ""}")
             if (!CarKeys.onKey(keycode, down, longPress) && down) log.i("unhandled keycode=$keycode")
         }
@@ -784,6 +854,7 @@ class GearslipRunner(
             val keycode = Wire.varint(fields, 1)?.toInt() ?: continue
             // int32, so a turn the other way arrives as a 64-bit two's complement varint.
             val delta = Wire.varint(fields, 2)?.toInt() ?: continue
+            if (keycode != 65536 || delta == 0) continue
             log.i("<- relative event: keycode=$keycode delta=$delta")
             CarKeys.onRotate(delta)
         }
@@ -846,7 +917,7 @@ class GearslipRunner(
         }
         if (videoStarted) return
         maxUnacked = answer.maxUnacked
-        val offered = answer.indices.filter { videoConfigs.getOrNull(it)?.pixelSize() != null }
+        val offered = answer.indices.filter { videoConfigs.getOrNull(it)?.isSupportedH264() == true }
         val preferred = vehicleProfile?.resolution?.let { want ->
             offered.firstOrNull { videoConfigs.getOrNull(it)?.resolutionName == want }
         }
@@ -860,7 +931,13 @@ class GearslipRunner(
             log.w("video: no supported configuration offered")
             return
         }
-        val focus = Protobuf.varintField(2, VIDEO_FOCUS_PROJECTED.toLong()) + Protobuf.varintField(3, 1)
+        val pendingFocus = pendingVideoFocus
+        pendingVideoFocus = null
+        if (pendingFocus == VIDEO_FOCUS_PROJECTED || pendingFocus == VIDEO_FOCUS_PROJECTED_NO_INPUT) {
+            onVideoFocus(pendingFocus)
+            return
+        }
+        val focus = Protobuf.varintField(2, VIDEO_FOCUS_PROJECTED.toLong()) + Protobuf.varintField(3, 0)
         send(MSG_VIDEO_FOCUS_REQUEST, focus, encrypted = true, channel = videoChannelId)
     }
 
@@ -915,12 +992,7 @@ class GearslipRunner(
             height = height,
             frameRate = if (config.frameRate == 1) 60 else 30,
             mode = if (useProjection) VideoSource.Mode.SURFACE else VideoSource.Mode.TEST_CARD,
-            onCodecConfig = { csd ->
-                lastCodecConfig = csd
-                send(MSG_MEDIA_CODEC_CONFIG, csd, encrypted = true, channel = videoChannelId)
-                log.i("-> CodecConfig (${csd.size} bytes SPS/PPS)")
-                log.hex("   csd", csd, limit = 64)
-            },
+            onCodecConfig = ::onVideoCodecConfig,
             onFrame = { data, presentationTimeUs, keyFrame ->
                 sendVideoFrame(data, presentationTimeUs, keyFrame)
             },
@@ -935,6 +1007,15 @@ class GearslipRunner(
                 if (!stopped && !resourcesReleased) SessionStatus.projecting()
             }
         }.onFailure { e -> log.e("encoder start failed", e) }
+    }
+
+    private fun onVideoCodecConfig(csd: ByteArray): Unit = synchronized(videoLock) {
+        if (stopped || !running || videoChannelId < 0) return
+        lastCodecConfig = csd
+        if (!videoProjected) return
+        send(MSG_MEDIA_CODEC_CONFIG, csd, encrypted = true, channel = videoChannelId)
+        log.i("-> CodecConfig (${csd.size} bytes SPS/PPS)")
+        log.hex("   csd", csd, limit = 64)
     }
 
     /** Backpressure preserves every encoded frame; only acknowledged packets release credit. */
@@ -980,6 +1061,7 @@ class GearslipRunner(
 
     /** Whether the car is showing Gearslip; false while it shows its own interface. */
     @Volatile private var videoProjected = true
+    @Volatile private var videoInputAllowed = true
     /** The encoder's SPS/PPS, resent when the car hands its screen back. */
     @Volatile private var lastCodecConfig: ByteArray? = null
 
@@ -991,12 +1073,18 @@ class GearslipRunner(
      */
     private fun onVideoFocus(mode: Int): Unit = synchronized(lifecycleLock) {
         if (stopped || !running || resourcesReleased) return
+        if (mode !in VIDEO_FOCUS_PROJECTED..VIDEO_FOCUS_PROJECTED_NO_INPUT) return
+        if (selectedConfigIndex == null || maxUnacked <= 0) {
+            pendingVideoFocus = mode
+            return
+        }
         updateVideoFocus(mode)
     }
 
     private fun updateVideoFocus(mode: Int): Unit = synchronized(videoLock) {
         if (selectedConfigIndex == null || maxUnacked <= 0) return
         val projected = mode == VIDEO_FOCUS_PROJECTED || mode == VIDEO_FOCUS_PROJECTED_NO_INPUT
+        videoInputAllowed = mode == VIDEO_FOCUS_PROJECTED
         if (!videoStarted) {
             // The head unit repeats this while it waits for frames; only start once.
             if (!projected) return
@@ -1033,8 +1121,8 @@ class GearslipRunner(
     }
 
     /** Android Auto's Exit: asks the car for its own interface, leaving the session running. */
-    private fun requestNativeFocus() {
-        if (!videoStarted) return
+    private fun requestNativeFocus(): Unit = synchronized(videoLock) {
+        if (stopped || !running || !videoStarted || videoChannelId < 0) return
         // VideoFocusRequestNotification { disp_channel_id = 1; mode = 2; reason = 3 }. The
         // display's channel is deprecated, but the 2018 Uconnect (protocol 1.3) predates that:
         // without it, it agreed to show its own screen and never did. LIVI ignores the field.
@@ -1064,18 +1152,15 @@ class GearslipRunner(
         log.i("touch -> frame: ${draw + encode}ms (draw ${draw}ms, encode and wait ${encode}ms)")
     }
 
-    private fun clamp(value: Int, limit: Int?): Float = when {
-        limit == null -> value.toFloat()
-        value < 0 -> 0f
-        value >= limit -> (limit - 1).toFloat()
-        else -> value.toFloat()
-    }
-
     private fun onPingRequest(body: ByteArray) {
         // The timestamp is an int64 and has to come back unchanged. Read as an int32 it was cut
         // short, and a car that checks the echo (an Audi MIB2+) gave up at its second ping.
-        val timestamp = Protobuf.readInt64Field(body, 1) ?: return
-        send(MSG_PING_RESPONSE, Protobuf.varintField(1, timestamp), encrypted = tls.handshakeComplete)
+        val fields = Wire.fields(body)
+        val timestamp = Wire.varint(fields, 1) ?: return
+        val payload = Wire.bytes(fields, 3)
+        val response = Protobuf.varintField(1, timestamp) +
+            (payload?.let { Protobuf.bytesField(2, it) } ?: byteArrayOf())
+        send(MSG_PING_RESPONSE, response, encrypted = tls.handshakeComplete)
         log.i("<- PingRequest(timestamp=$timestamp) / -> PingResponse (keeping the session alive)")
     }
 
@@ -1096,6 +1181,7 @@ class GearslipRunner(
         // held each other up until something timed out, about two seconds a time.
         try {
             writer.execute {
+                if (channel in closedChannels) return@execute
                 try {
                     val frameCount = Frames.writeMessage(output, channel, encrypted, messageType, payload) { tls.encrypt(it) }
                     if (frameCount > 1) splitMessages++
@@ -1214,8 +1300,11 @@ class GearslipRunner(
         const val MSG_PING_RESPONSE = 12
         const val MSG_BYEBYE_REQUEST = 15
         const val MSG_BYEBYE_RESPONSE = 16
+        const val MSG_UNEXPECTED_MESSAGE = 255
+        const val MSG_FRAMING_ERROR = 65535
         const val MSG_CHANNEL_OPEN_REQUEST = 7
         const val MSG_CHANNEL_OPEN_RESPONSE = 8
+        const val MSG_CHANNEL_CLOSE_NOTIFICATION = 9
 
         // aap_protobuf/service/media/.../MediaMessageId
         const val MSG_MEDIA_DATA = 0

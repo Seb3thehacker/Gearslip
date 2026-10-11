@@ -23,6 +23,7 @@ class CarMic(
     @Volatile private var ready = false
     @Volatile private var listening = false
     private var session: Int? = null
+    private var pendingAudio: ByteArray? = null
     private var closed = false
     private val pendingRequests = ArrayDeque<Boolean>()
     private var packets = 0
@@ -47,18 +48,27 @@ class CarMic(
         val opening = pendingRequests.removeFirstOrNull() ?: return
         val fields = Wire.fields(body)
         val success = Wire.varint(fields, 1)?.toInt() == 0
-        session = if (opening && success) Wire.varint(fields, 2)?.toInt() else null
+        session = if (opening && success) Wire.varint(fields, 2)?.toInt() ?: 0 else null
+        val firstAudio = pendingAudio
+        pendingAudio = null
         if (session == null) {
             listening = false
             chunks.clear()
+        } else if (firstAudio != null) {
+            onData(firstAudio)
         }
         GearslipLog.i("mic: response to ${if (opening) "open" else "close"}, success=$success")
     }
 
     private fun onData(body: ByteArray) {
-        val activeSession = session ?: return
+        if (!usable) return
         val pcmSize = body.size - TIMESTAMP_BYTES
         if (pcmSize <= 0 || pcmSize % (2 * config.channels) != 0) return
+        val activeSession = session
+        if (activeSession == null) {
+            bufferPendingAudio(body, pcmSize)
+            return
+        }
         sendOnChannel(MediaProtocol.ACK, MediaProtocol.ack(activeSession))
         if (!listening) return
         // Bound both individual packets and the queue if speech stops consuming the stream.
@@ -73,6 +83,17 @@ class CarMic(
             stop()
         }
         packets++
+    }
+
+    /** DHU starts its capture thread before sending the response containing the session ID. */
+    private fun bufferPendingAudio(body: ByteArray, pcmSize: Int) {
+        if (!listening || pendingRequests.firstOrNull() != true) return
+        // We advertise one packet of credit. Retain at most that packet until it can be ACKed.
+        if (pendingAudio != null || pcmSize > config.sampleRate * 2 * config.channels) {
+            stop()
+            return
+        }
+        pendingAudio = body
     }
 
     /** Little-endian PCM after the timestamp, mixed to mono and averaged down to [RATE]. */
@@ -101,6 +122,7 @@ class CarMic(
         chunks.clear()
         packets = 0
         session = null
+        pendingAudio = null
         listening = true
         requestRecording(true)
         return true
@@ -113,6 +135,7 @@ class CarMic(
     fun stop() {
         if (!listening) return
         listening = false
+        pendingAudio = null
         chunks.clear()
         requestRecording(false)
         GearslipLog.i("mic: -> close after $packets packets")
@@ -131,6 +154,7 @@ class CarMic(
         closed = true
         ready = false
         session = null
+        pendingAudio = null
         pendingRequests.clear()
         chunks.clear()
     }
