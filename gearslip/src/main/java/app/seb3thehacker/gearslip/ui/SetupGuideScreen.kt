@@ -206,22 +206,6 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
         )
     }
 
-    // --- GrapheneOS ------------------------------------------------------------------
-    add(
-        GuidePage(
-            title = "GrapheneOS exploit protection",
-            explanation = "On GrapheneOS only: open Gearslip's app settings and turn on Exploit " +
-                "protection compatibility mode. Gearslip's native USB and video code trips " +
-                "GrapheneOS's hardened memory checks otherwise. Skip this on any other Android.",
-            actionLabel = "Open app settings",
-            onAction = {
-                context.startActivity(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
-                )
-            },
-        ),
-    )
-
     // --- Android Auto ------------------------------------------------------------------
     val androidAutoPackage = AndroidAuto.installedPackage(context)
         ?.takeIf { AndroidAuto.isActive(context, it) }
@@ -306,8 +290,7 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
 }
 
 /**
- * The first-run guide, one page at a time: permissions, then GrapheneOS's exploit-protection
- * toggle, then removing Android Auto if it is still installed, then the optional extras. Nothing
+ * The first-run guide, one page at a time: permissions, then removing Android Auto if it is still installed, then the optional extras. Nothing
  * here can be verified as done except a permission grant, so every other page is a "Next" a
  * driver takes on trust, with "Skip" sitting right next to it.
  */
