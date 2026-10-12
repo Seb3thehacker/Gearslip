@@ -37,7 +37,7 @@ import app.seb3thehacker.gearslip.BuildConfig
 import app.seb3thehacker.gearslip.CertProvider
 import app.seb3thehacker.gearslip.stats.UsageStats
 
-private enum class Screen { HOME, LOGS, SETTINGS, CAR_PREVIEW, CERT_SETUP, SETUP_GUIDE, USAGE_NOTES, HELP, WHATS_NEW, RECOMMENDED_APPS }
+private enum class Screen { INTRO, HOME, LOGS, SETTINGS, CAR_PREVIEW, CERT_SETUP, SETUP_GUIDE, USAGE_NOTES, HELP, WHATS_NEW, RECOMMENDED_APPS }
 
 /** Three screens and a back stack of depth one: no navigation library needed. */
 @Composable
@@ -47,20 +47,22 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
         !AppSettings.hasSkippedCertSetup(context) && !CertProvider.hasAnyCert(context)
     }
     val needsSetupGuide = remember { !AppSettings.hasSeenPermissionsSetup(context) }
-    var screen by rememberSaveable {
-        mutableStateOf(
-            when {
-                needsCertSetup -> Screen.CERT_SETUP
-                needsSetupGuide -> Screen.SETUP_GUIDE
-                // Set up before usage notes existed: ask once, on the setup guide's own page.
-                !UsageStats.asked(context) -> Screen.USAGE_NOTES
-                else -> Screen.HOME
-            },
-        )
+    // Where launch goes once the intro (if any) is done.
+    val afterIntro = remember {
+        when {
+            needsCertSetup -> Screen.CERT_SETUP
+            needsSetupGuide -> Screen.SETUP_GUIDE
+            // Set up before usage notes existed: ask once, on the setup guide's own page.
+            !UsageStats.asked(context) -> Screen.USAGE_NOTES
+            else -> Screen.HOME
+        }
     }
+    var screen by rememberSaveable { mutableStateOf(if (Intro.due(context)) Screen.INTRO else afterIntro) }
+    // A replay from About goes back to Settings; the launch one carries on into setup.
+    var introReturn by rememberSaveable { mutableStateOf(afterIntro) }
     // Home's usage notes row opens Settings at that section rather than at the top.
     var settingsAtUsageNotes by rememberSaveable { mutableStateOf(false) }
-    BackHandler(enabled = screen != Screen.HOME) {
+    BackHandler(enabled = screen != Screen.HOME && screen != Screen.INTRO) {
         screen = if (screen == Screen.RECOMMENDED_APPS) Screen.SETTINGS else Screen.HOME
     }
 
@@ -93,10 +95,11 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
             .windowInsetsPadding(WindowInsets.statusBars)
             .consumeWindowInsets(WindowInsets.statusBars),
     ) {
-        if (BuildConfig.DEBUG && screen != Screen.CAR_PREVIEW) DevBuildBanner()
+        if (BuildConfig.DEBUG && screen != Screen.CAR_PREVIEW && screen != Screen.INTRO) DevBuildBanner()
 
         Column(Modifier.weight(1f)) {
             when (screen) {
+                Screen.INTRO -> IntroScreen(onDone = { screen = introReturn })
                 Screen.HOME -> HomeScreen(
                     onOpenLogs = { screen = Screen.LOGS },
                     onOpenSettings = { settingsAtUsageNotes = false; screen = Screen.SETTINGS },
@@ -112,6 +115,7 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
                     onOpenRecommendedApps = { settingsAtUsageNotes = false; screen = Screen.RECOMMENDED_APPS },
                     onOpenWhatsNew = { settingsAtUsageNotes = false; screen = Screen.WHATS_NEW },
                     onReplayTutorial = { screen = Screen.SETUP_GUIDE },
+                    onReplayIntro = { introReturn = Screen.SETTINGS; screen = Screen.INTRO },
                     atUsageNotes = settingsAtUsageNotes,
                 )
                 Screen.RECOMMENDED_APPS -> RecommendedAppsScreen(onBack = { screen = Screen.SETTINGS })
