@@ -301,11 +301,14 @@ class CarAppConnection(private val context: Context) {
     /**
      * "navigate to X" deep link, the same one Android Auto's own Assistant integration sends -
      * [ACTION_NAVIGATE] with the destination as a `geo:` search query, rather than anything
-     * app-specific.
+     * app-specific. Centred on the phone when there's a fix: `geo:0,0` made Organic Maps pick the
+     * first Del Taco it found anywhere, not the nearest. The location goes only to the map app.
      */
-    private fun navigateIntent(destination: String) =
-        Intent(CarContext.ACTION_NAVIGATE, Uri.parse("geo:0,0?q=" + Uri.encode(destination)))
+    private fun navigateIntent(destination: String): Intent {
+        val near = app.seb3thehacker.gearslip.notify.CarMotion.nearHere(context) ?: "0,0"
+        return Intent(CarContext.ACTION_NAVIGATE, Uri.parse("geo:$near?q=" + Uri.encode(destination)))
             .setComponent(component)
+    }
 
     /**
      * Sends a fresh destination to an app that's already running, instead of tearing it down
