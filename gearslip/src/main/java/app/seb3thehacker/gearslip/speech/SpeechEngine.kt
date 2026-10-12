@@ -17,6 +17,7 @@ import app.seb3thehacker.gearslip.audio.CarMic
 import com.k2fsa.sherpa.onnx.EndpointConfig
 import com.k2fsa.sherpa.onnx.EndpointRule
 import com.k2fsa.sherpa.onnx.FeatureConfig
+import com.k2fsa.sherpa.onnx.OfflineCanaryModelConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
@@ -284,12 +285,21 @@ object SpeechEngine {
             OfflineRecognizer(
                 config = OfflineRecognizerConfig(
                     featConfig = FeatureConfig(sampleRate = RATE, featureDim = 80),
-                    modelConfig = OfflineModelConfig(
-                        transducer = OfflineTransducerModelConfig(path(model.encoder), path(model.decoder), path(model.joiner)),
-                        tokens = path("tokens.txt"),
-                        numThreads = threads(),
-                        modelType = model.modelType,
-                    ),
+                    modelConfig = if (model.modelType == "canary") {
+                        // English in, English out, and no punctuation: clean() strips it anyway.
+                        OfflineModelConfig(
+                            canary = OfflineCanaryModelConfig(path(model.encoder), path(model.decoder), srcLang = "en", tgtLang = "en", usePnc = false),
+                            tokens = path("tokens.txt"),
+                            numThreads = threads(),
+                        )
+                    } else {
+                        OfflineModelConfig(
+                            transducer = OfflineTransducerModelConfig(path(model.encoder), path(model.decoder), path(model.joiner)),
+                            tokens = path("tokens.txt"),
+                            numThreads = threads(),
+                            modelType = model.modelType,
+                        )
+                    },
                     decodingMethod = "greedy_search",
                 ),
             )

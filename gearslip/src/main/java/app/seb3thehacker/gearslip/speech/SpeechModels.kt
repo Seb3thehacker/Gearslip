@@ -31,6 +31,7 @@ object SpeechModels {
         private val archive: String,
         val encoder: String,
         val decoder: String,
+        /** Empty for Canary, which decodes with attention and has no joiner. */
         val joiner: String,
         val modelType: String = "",
     ) {
@@ -44,6 +45,11 @@ object SpeechModels {
             "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8",
             "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", modelType = "nemo_transducer",
         ),
+        CANARY(
+            Role.FINAL, "canary-180m-en", "Canary", "In between: better than Parakeet small, quicker than large. NVIDIA NeMo, CC BY 4.0", 154,
+            "sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8",
+            "encoder.int8.onnx", "decoder.int8.onnx", "", modelType = "canary",
+        ),
         PARAKEET_LARGE(
             Role.FINAL, "parakeet-0.6b-en", "Parakeet large", "Recommended. Hears names and places best. NVIDIA NeMo, CC BY 4.0", 460,
             "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
@@ -52,7 +58,7 @@ object SpeechModels {
         ;
 
         val url get() = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$archive.tar.bz2"
-        val files get() = listOf(encoder, decoder, joiner, "tokens.txt")
+        val files get() = listOf(encoder, decoder, joiner, "tokens.txt").filter { it.isNotEmpty() }
     }
 
     sealed interface State {
