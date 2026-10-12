@@ -11,7 +11,7 @@ local.properties
 *.keystore
 keystore.properties
 
-# Native build cache.
+# Native build cache
 .cxx/
 
 # Testing
