@@ -45,7 +45,10 @@ class GearslipRunner(
     private lateinit var identityTask: FutureTask<PhoneTls>
 
     /** Sends every message, in order, so no other thread ever blocks on the USB link. See [send]. */
-    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "gearslip-writer") }
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor {
+        // Sound goes out through here too, so it gets audio's priority: late writes are skips.
+        Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO); it.run() }, "gearslip-writer")
+    }
 
     /** Waits for the certificate only when TLS is first needed; see [run]. */
     private val tls: PhoneTls by lazy { identityTask.get() }
@@ -88,6 +91,8 @@ class GearslipRunner(
     @Volatile private var lastKeyframeSentAt = 0L
 
     fun run() {
+        // This thread reads the car's acks; audio waits on them, so it can't be left at the back.
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
         SessionReport.begin()
         log.i("--- session starting ---")
         SessionStatus.connecting("Connected to the head unit")
