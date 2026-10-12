@@ -4,7 +4,6 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
-import android.content.res.AssetManager
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -15,40 +14,47 @@ import android.os.Looper
 import android.os.SystemClock
 import app.seb3thehacker.gearslip.GearslipLog
 import app.seb3thehacker.gearslip.audio.CarMic
-import java.util.Locale
+import com.k2fsa.sherpa.onnx.EndpointConfig
+import com.k2fsa.sherpa.onnx.EndpointRule
+import com.k2fsa.sherpa.onnx.FeatureConfig
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
+import com.k2fsa.sherpa.onnx.OnlineModelConfig
+import com.k2fsa.sherpa.onnx.OnlineRecognizer
+import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import java.io.File
 import java.util.concurrent.Executors
-import kotlin.math.log10
 import kotlin.math.max
-import kotlin.math.sqrt
 
 /**
  * Gearslip's own speech-to-text, so voice works on phones with no speech service (GrapheneOS ships
- * none). whisper.cpp runs FUTO's ACFT Whisper model, which are tuned for short phrases: a reply
- * of a few seconds comes back in well under a second on a recent phone.
+ * none). sherpa-onnx runs a streaming model ([SpeechModels]) on the phone: words come out while
+ * the driver is still talking, and the model itself decides when they've finished. A larger model
+ * then reads the whole phrase once more for the final words, since a model that waits for the end
+ * hears names and places far better than one that has to keep up. The phrase is held in memory
+ * for that and nowhere else, and dropped as soon as it's read.
  *
- * Whisper needs the whole phrase before it starts, so this records from the car's microphone (the
- * phone's when the car has none or sends nothing),
- * decides when the driver has stopped talking (a stretch of quiet after speech), then transcribes
- * once. Everything runs on one worker thread; callbacks arrive on the main thread.
+ * Audio comes from the car's microphone, or the phone's when the car has none or sends nothing.
+ * Everything runs on one worker thread; callbacks arrive on the main thread.
  */
 object SpeechEngine {
-
-    /**
-     * FUTO's ACFT Whisper (Apache-2.0), re-quantized to 5 bits, inside the APK: base when the build
-     * carries it (more accurate, about twice as slow), tiny otherwise.
-     */
-    private val MODELS = listOf("speech/base_acft_q5_1.bin", "speech/tiny_acft_q5_1.bin")
 
     /** The error for an engine that can't run at all, which callers may answer with a fallback. */
     const val NOT_LOADED = "The speech model didn't load."
 
+    /** Said when the chosen model hasn't been downloaded yet. */
+    const val NOT_DOWNLOADED = "Download a voice model in Gearslip's settings on the phone first."
+
     private const val RATE = 16_000
-    private const val FRAME = 480 // 30 ms
-    private const val MAX_MS = 15_000L
-    private const val NO_SPEECH_MS = 6_000L
-    private const val END_SILENCE_MS = 1_100L
-    private const val CALIBRATE_MS = 300L
-    private const val PRE_ROLL = RATE * 3 / 10 // keep 300 ms before the first word
+    private const val CHUNK = 1_600 // 100 ms
+    private const val MAX_S = 15f
+    /** Quiet before the first word that counts as "nobody spoke". */
+    private const val NO_SPEECH_S = 6f
+    /** Quiet after the last word that ends the phrase. */
+    private const val END_SILENCE_S = 1.0f
     private const val CUE_VOLUME = 80
     /** How long the car gets to start sending once asked, before the phone's microphone takes over. */
     private const val CAR_FIRST_AUDIO_MS = 1_500L
@@ -60,25 +66,46 @@ object SpeechEngine {
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "gearslip-speech") }
     private val main = Handler(Looper.getMainLooper())
 
-    private var libraryLoaded = false
-    private var handle = 0L
+    private var recognizer: OnlineRecognizer? = null
+    private var loadedModel: SpeechModels.Model? = null
+    private var finalRecognizer: OfflineRecognizer? = null
+    private var loadedFinal: SpeechModels.Model? = null
     @Volatile private var run = 0
 
-    /** Loads the model ahead of time, so the first reply doesn't wait for it. */
+    /** Loads the model ahead of time, so the first command doesn't wait for it. */
     fun warm(context: Context) {
         val app = context.applicationContext
-        worker.execute { ensureLoaded(app) }
+        SpeechModels.init(app)
+        worker.execute {
+            ensureLoaded(app)
+            ensureFinalLoaded(app)
+        }
+    }
+
+    /** Drops the loaded model, after the driver picks another or deletes it. */
+    fun unload() {
+        run++
+        worker.execute {
+            recognizer?.release()
+            recognizer = null
+            loadedModel = null
+            finalRecognizer?.release()
+            finalRecognizer = null
+            loadedFinal = null
+        }
     }
 
     /**
      * Listens for one phrase. [cue] plays a short tone first, so the driver knows when to talk.
-     * [onSpeaking] fires at the first word, [onHeard] when the driver stops and the words are being
-     * worked out; [onResult] gets the text, [onError] a sentence fit to show on the car screen.
+     * [onPartial] gets the words so far as they're recognized, [onSpeaking] fires at the first
+     * word, [onHeard] when the driver stops; [onResult] gets the text, [onError] a sentence fit to
+     * show on the car screen.
      */
     fun listen(
         context: Context,
         cue: Boolean = true,
         onSpeaking: () -> Unit = {},
+        onPartial: (String) -> Unit = {},
         onHeard: () -> Unit,
         onResult: (String) -> Unit,
         onError: (String) -> Unit,
@@ -92,32 +119,186 @@ object SpeechEngine {
         fun post(block: () -> Unit) { main.post { if (id == run) block() } }
         worker.execute {
             if (id != run) return@execute
-            if (!ensureLoaded(app)) return@execute post { onError(NOT_LOADED) }
+            if (!SpeechModels.isReady(app, SpeechModels.selected.value)) return@execute post { onError(NOT_DOWNLOADED) }
+            val r = ensureLoaded(app) ?: return@execute post { onError(NOT_LOADED) }
             VoiceFocus.acquire(app)
-            val audio = try {
+            val text = try {
                 if (cue) cue()
                 if (id != run) return@execute
-                record(id) { post(onSpeaking) }
+                stream(app, r, id, onSpeaking = { post(onSpeaking) }, onPartial = { post { onPartial(it) } }, onStopped = { post(onHeard) })
             } catch (t: Throwable) {
-                GearslipLog.e("speech: recording failed", t)
+                GearslipLog.e("speech: listening failed", t)
                 return@execute post { onError("The microphone isn't available right now.") }
             } finally {
                 VoiceFocus.release()
             }
             if (id != run) return@execute
-            if (audio == null) return@execute post { onError("Didn't catch that.") }
             post(onHeard)
-            val started = SystemClock.uptimeMillis()
-            val text = clean(transcribe(audio))
-            GearslipLog.i(
-                "speech: ${audio.size * 1000L / RATE} ms of audio took ${SystemClock.uptimeMillis() - started} ms",
-            )
             post { if (text.isEmpty()) onError("Didn't catch that.") else onResult(text) }
         }
     }
 
     /** Stops listening; a phrase already being worked out is dropped. */
     fun cancel() { run++ }
+
+    /**
+     * Feeds the microphone to the recognizer in 100 ms pieces, reporting the words as they firm
+     * up, until the model hears the end of the phrase (or nobody speaks, or it runs too long).
+     */
+    private fun stream(
+        context: Context,
+        r: OnlineRecognizer,
+        id: Int,
+        onSpeaking: () -> Unit,
+        onPartial: (String) -> Unit,
+        onStopped: () -> Unit,
+    ): String {
+        val mic = carMic() ?: phoneMic()
+        val s = r.createStream()
+        val frame = ShortArray(CHUNK)
+        val samples = FloatArray(CHUNK)
+        // The whole phrase, for the final read; [MAX_S] and a little over is the most it can hold.
+        val phrase = FloatArray((RATE * (MAX_S + 1)).toInt())
+        var held = 0
+        var last = ""
+        var spoke = false
+        var audioMs = 0L
+        var decodeMs = 0L
+        try {
+            while (id == run) {
+                val n = mic.read(frame)
+                if (n < 0) break
+                if (n == 0) continue
+                for (i in 0 until n) samples[i] = frame[i] / 32768f
+                val keep = minOf(n, phrase.size - held)
+                System.arraycopy(samples, 0, phrase, held, keep)
+                held += keep
+                s.acceptWaveform(if (n == CHUNK) samples else samples.copyOf(n), RATE)
+                audioMs += n * 1000L / RATE
+                val started = SystemClock.uptimeMillis()
+                while (r.isReady(s)) r.decode(s)
+                decodeMs += SystemClock.uptimeMillis() - started
+                val text = clean(r.getResult(s).text)
+                if (text != last) {
+                    last = text
+                    if (text.isNotEmpty() && !spoke) {
+                        spoke = true
+                        onSpeaking()
+                    }
+                    onPartial(text)
+                }
+                if (r.isEndpoint(s)) break
+            }
+            s.inputFinished()
+            while (r.isReady(s)) r.decode(s)
+            last = clean(r.getResult(s).text)
+        } finally {
+            mic.close()
+            s.release()
+        }
+        // Under 1.0 keeps up with the driver; over it, the words fall behind the voice.
+        GearslipLog.i(
+            "speech: $audioMs ms of audio, decoding took $decodeMs ms " +
+                "(${"%.2f".format(decodeMs.toFloat() / max(1L, audioMs))} of real time)",
+        )
+        if (last.isEmpty() || id != run) return last
+        val final = ensureFinalLoaded(context) ?: return last
+        onStopped()
+        val started = SystemClock.uptimeMillis()
+        val reread = final.createStream().run {
+            try {
+                acceptWaveform(phrase.copyOf(held), RATE)
+                final.decode(this)
+                clean(final.getResult(this).text)
+            } finally {
+                release()
+            }
+        }
+        phrase.fill(0f)
+        GearslipLog.i("speech: the final read took ${SystemClock.uptimeMillis() - started} ms")
+        if (reread.isEmpty()) return last
+        if (reread != last) onPartial(reread)
+        return reread
+    }
+
+    /** The model that rereads the phrase, when one is chosen and downloaded; null otherwise. */
+    private fun ensureFinalLoaded(context: Context): OfflineRecognizer? {
+        val model = SpeechModels.final.value ?: return null
+        if (finalRecognizer != null && loadedFinal == model) return finalRecognizer
+        finalRecognizer?.release()
+        finalRecognizer = null
+        if (!SpeechModels.isReady(context, model)) return null
+        val dir = SpeechModels.dir(context, model)
+        fun path(name: String) = File(dir, name).absolutePath
+        val started = SystemClock.uptimeMillis()
+        return runCatching {
+            OfflineRecognizer(
+                config = OfflineRecognizerConfig(
+                    featConfig = FeatureConfig(sampleRate = RATE, featureDim = 80),
+                    modelConfig = OfflineModelConfig(
+                        transducer = OfflineTransducerModelConfig(path(model.encoder), path(model.decoder), path(model.joiner)),
+                        tokens = path("tokens.txt"),
+                        numThreads = threads(),
+                        modelType = model.modelType,
+                    ),
+                    decodingMethod = "greedy_search",
+                ),
+            )
+        }.onSuccess {
+            finalRecognizer = it
+            loadedFinal = model
+            GearslipLog.i("speech: loaded ${model.label} in ${SystemClock.uptimeMillis() - started} ms")
+        }.onFailure {
+            GearslipLog.e("speech: couldn't load ${model.label}", it)
+        }.getOrNull()
+    }
+
+    private fun ensureLoaded(context: Context): OnlineRecognizer? {
+        val model = SpeechModels.selected.value
+        if (recognizer != null && loadedModel == model) return recognizer
+        recognizer?.release()
+        recognizer = null
+        if (!SpeechModels.isReady(context, model)) return null
+        val dir = SpeechModels.dir(context, model)
+        fun path(name: String) = File(dir, name).absolutePath
+        val started = SystemClock.uptimeMillis()
+        return runCatching {
+            OnlineRecognizer(
+                config = OnlineRecognizerConfig(
+                    featConfig = FeatureConfig(sampleRate = RATE, featureDim = 80),
+                    modelConfig = OnlineModelConfig(
+                        transducer = OnlineTransducerModelConfig(path(model.encoder), path(model.decoder), path(model.joiner)),
+                        tokens = path("tokens.txt"),
+                        numThreads = threads(),
+                        modelType = model.modelType,
+                    ),
+                    endpointConfig = EndpointConfig(
+                        rule1 = EndpointRule(false, NO_SPEECH_S, 0f),
+                        rule2 = EndpointRule(true, END_SILENCE_S, 0f),
+                        rule3 = EndpointRule(false, 0f, MAX_S),
+                    ),
+                    enableEndpoint = true,
+                    decodingMethod = "greedy_search",
+                ),
+            )
+        }.onSuccess {
+            recognizer = it
+            loadedModel = model
+            GearslipLog.i("speech: loaded ${model.label} in ${SystemClock.uptimeMillis() - started} ms")
+        }.onFailure {
+            GearslipLog.e("speech: couldn't load ${model.label}", it)
+        }.getOrNull()
+    }
+
+    /** The big cores only: more threads than that slow the model down on a phone. */
+    private fun threads() = Runtime.getRuntime().availableProcessors().let { if (it >= 8) 4 else max(1, it / 2) }
+
+    /**
+     * Models write in upper case, or with punctuation and capitals of their own; commands are
+     * matched in plain lower case, so only words and apostrophes are kept.
+     */
+    private fun clean(text: String): String =
+        text.lowercase().replace(Regex("[^\\p{L}\\p{N}' ]"), " ").replace(Regex("\\s+"), " ").trim()
 
     /**
      * A short beep on the media stream, so it plays through the car like everything else, then a
@@ -133,14 +314,9 @@ object SpeechEngine {
         }
     }
 
-    // --- recording --------------------------------------------------------------------------
+    // --- microphones -----------------------------------------------------------------------
 
-    /**
-     * Records until the driver stops talking. Returns the phrase from just before the first word,
-     * or null when nobody spoke. The speech threshold follows the noise in the first 300 ms, so a
-     * loud cabin needs a louder voice than a quiet one to count as talking.
-     */
-    /** Where a phrase is recorded from: [read] fills [frame] and returns how many samples it got. */
+    /** Where a phrase is heard from: [read] fills [frame] and returns how many samples it got, -1 at the end. */
     private interface Mic {
         fun read(frame: ShortArray): Int
         fun close()
@@ -151,10 +327,11 @@ object SpeechEngine {
         val min = AudioRecord.getMinBufferSize(RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val recorder = AudioRecord(
             MediaRecorder.AudioSource.VOICE_RECOGNITION, RATE,
-            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(min, FRAME * 8),
+            AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, max(min, CHUNK * 4),
         )
         check(recorder.state == AudioRecord.STATE_INITIALIZED) { "AudioRecord didn't initialize" }
         recorder.startRecording()
+        GearslipLog.i("speech: listening through the phone's microphone")
         return object : Mic {
             override fun read(frame: ShortArray) = recorder.read(frame, 0, frame.size)
             override fun close() {
@@ -166,7 +343,7 @@ object SpeechEngine {
 
     /**
      * The car's microphone, which hears the driver better than a phone in a cup holder. The car
-     * sends audio in its own sized pieces; they're cut to [FRAME]s here. Null when there's no car
+     * sends audio in its own sized pieces; they're cut to [CHUNK]s here. Null when there's no car
      * microphone, or it sends nothing at first, so the phone's is used instead.
      */
     private fun carMic(): Mic? {
@@ -193,107 +370,10 @@ object SpeechEngine {
                     at += n
                     if (at == chunk.size) { pending = null; at = 0 }
                 }
-                // The car stopped sending mid-phrase: end the recording rather than wait forever.
+                // The car stopped sending mid-phrase: end the phrase rather than wait forever.
                 return if (filled == 0) -1 else filled
             }
             override fun close() = car.stop()
         }
     }
-
-    /**
-     * Records until the driver stops talking. Returns the phrase from just before the first word,
-     * or null when nobody spoke. The speech threshold follows the noise in the first 300 ms, so a
-     * loud cabin needs a louder voice than a quiet one to count as talking.
-     */
-    private fun record(id: Int, onSpeaking: () -> Unit): FloatArray? {
-        val mic = carMic() ?: phoneMic()
-        val samples = FloatArray((RATE * MAX_MS / 1000).toInt())
-        var count = 0
-        val frame = ShortArray(FRAME)
-        var noise = 0.0
-        var noiseFrames = 0
-        var speechStart = -1
-        var lastSpeech = 0
-        try {
-            while (id == run && count + FRAME <= samples.size) {
-                val n = mic.read(frame)
-                if (n < 0) break
-                if (n == 0) continue
-                var sum = 0.0
-                for (i in 0 until n) {
-                    val v = frame[i] / 32768f
-                    samples[count + i] = v
-                    sum += v * v
-                }
-                count += n
-                val db = 20 * log10(sqrt(sum / n) + 1e-9)
-                val ms = count * 1000L / RATE
-                if (ms <= CALIBRATE_MS) {
-                    noise += db; noiseFrames++
-                    continue
-                }
-                val floor = if (noiseFrames > 0) noise / noiseFrames else -60.0
-                val talking = db > max(floor + 12, -45.0)
-                if (talking) {
-                    if (speechStart < 0) {
-                        speechStart = max(0, count - n - PRE_ROLL)
-                        onSpeaking()
-                    }
-                    lastSpeech = count
-                }
-                if (speechStart < 0 && ms > NO_SPEECH_MS) return null
-                if (speechStart >= 0 && (count - lastSpeech) * 1000L / RATE > END_SILENCE_MS) break
-            }
-        } finally {
-            mic.close()
-        }
-        if (speechStart < 0) return null
-        return samples.copyOfRange(speechStart, count)
-    }
-
-    // --- the model --------------------------------------------------------------------------
-
-    private fun ensureLoaded(context: Context): Boolean {
-        if (handle != 0L) return true
-        if (!libraryLoaded) {
-            runCatching { System.loadLibrary("gearslip_speech") }
-                .onFailure { GearslipLog.e("speech: native library missing", it); return false }
-            libraryLoaded = true
-        }
-        val started = SystemClock.uptimeMillis()
-        val model = MODELS.firstOrNull { name -> runCatching { context.assets.open(name).close() }.isSuccess }
-            ?: run { GearslipLog.w("speech: no model in the build"); return false }
-        handle = nativeInitAsset(context.assets, model)
-        if (handle == 0L) {
-            GearslipLog.w("speech: couldn't load the model")
-            return false
-        }
-        GearslipLog.i("speech: loaded $model in ${SystemClock.uptimeMillis() - started} ms")
-        return true
-    }
-
-    private fun transcribe(audio: FloatArray): String {
-        val bytes = nativeTranscribe(handle, audio, language(), threads())
-        return String(bytes, Charsets.UTF_8)
-    }
-
-    /** The phone's language, as Whisper names it. Older Java codes differ for a few. */
-    private fun language(): String = when (val lang = Locale.getDefault().language) {
-        "iw" -> "he"
-        "in" -> "id"
-        "ji" -> "yi"
-        "" -> "en"
-        else -> lang
-    }
-
-    /** The big cores only: more threads than that slow Whisper down on a phone. */
-    private fun threads() = Runtime.getRuntime().availableProcessors().coerceIn(1, 8).let { if (it >= 8) 4 else max(1, it / 2) }
-
-    /** Whisper marks silence and noise as "[BLANK_AUDIO]" or "(wind blowing)"; none of it is words. */
-    private fun clean(text: String): String =
-        text.replace(Regex("""\[[^\]]*\]|\([^)]*\)|\*[^*]*\*"""), " ").replace(Regex("\\s+"), " ").trim()
-
-    private external fun nativeInitAsset(assets: AssetManager, path: String): Long
-    private external fun nativeTranscribe(handle: Long, samples: FloatArray, language: String, threads: Int): ByteArray
-    private external fun nativeFree(handle: Long)
 }

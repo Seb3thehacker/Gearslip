@@ -83,20 +83,9 @@ android {
     }
 
     defaultConfig {
-        // Speech-to-text ships for 64-bit ARM only: every phone Gearslip runs on, and one copy
-        // of the native library instead of four.
+        // Speech-to-text (sherpa-onnx, in jniLibs) ships for 64-bit ARM only: every phone
+        // Gearslip runs on, and one copy of the native library instead of four.
         ndk { abiFilters += "arm64-v8a" }
-    }
-    ndkVersion = "27.1.12297006"
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-    androidResources {
-        // Model weights barely compress, and stored plainly they stream straight out of the APK.
-        noCompress += "bin"
     }
 
     testOptions {
@@ -130,6 +119,7 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.commons.compress)
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

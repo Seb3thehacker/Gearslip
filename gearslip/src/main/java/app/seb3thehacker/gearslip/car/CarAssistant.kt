@@ -178,8 +178,8 @@ object CarAssistant {
     }
 
     /**
-     * One phrase, through Gearslip's own [SpeechEngine]. The phone's recognizer is only a fallback
-     * for when the engine itself can't run, since plenty of phones (GrapheneOS among them) have none.
+     * One phrase, through Gearslip's own [SpeechEngine], or the phone's recognizer when the driver
+     * chose it in settings. Never the phone's on its own: on most phones that's Google's.
      */
     private fun listenOnce(
         onPartial: (String) -> Unit,
@@ -197,15 +197,10 @@ object CarAssistant {
             context,
             cue = cue,
             onSpeaking = onSpeaking,
+            onPartial = onPartial,
             onHeard = onHeard,
             onResult = onResult,
-            onError = { message ->
-                if (message == SpeechEngine.NOT_LOADED && SpeechRecognizer.isRecognitionAvailable(context)) {
-                    systemListen(context, onPartial, onHeard, onResult, onError)
-                } else {
-                    onError(message)
-                }
-            },
+            onError = onError,
         )
     }
 

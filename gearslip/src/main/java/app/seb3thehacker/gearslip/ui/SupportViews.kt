@@ -151,4 +151,11 @@ internal fun AboutLinkRows() {
         icon = Icons.Filled.Build,
         trailing = arrow,
     )
+    SettingsDivider()
+    SettingsRow(
+        "Voice credits",
+        subtitle = "Speech recognition by sherpa-onnx (Apache 2.0), with Kroko ASR by Banafo " +
+            "(CC BY-SA 4.0) and Parakeet by NVIDIA (CC BY 4.0)",
+        icon = Icons.Filled.Favorite,
+    )
 }

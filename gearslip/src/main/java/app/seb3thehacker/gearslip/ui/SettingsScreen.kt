@@ -109,6 +109,7 @@ fun SettingsScreen(
             AboutSection(onOpenWhatsNew, onReplayTutorial, onReplayIntro)
             ConnectionSection()
             CarAudioSection()
+            VoiceModelSection()
             if (SHOW_RECOMMENDED_APPS) AppsSection(onOpenRecommendedApps)
             CertificateSection()
             SettingsSection("Usage notes", header = USAGE_STATS_INTRO) { UsageStatsRows() }
