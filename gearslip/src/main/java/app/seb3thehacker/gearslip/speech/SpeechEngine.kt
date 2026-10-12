@@ -56,6 +56,7 @@ object SpeechEngine {
     /** Quiet after the last word that ends the phrase. */
     private const val END_SILENCE_S = 1.0f
     private const val CUE_VOLUME = 80
+    private const val IDLE_UNLOAD_MS = 5 * 60_000L
     /** How long the car gets to start sending once asked, before the phone's microphone takes over. */
     private const val CAR_FIRST_AUDIO_MS = 1_500L
     private const val CAR_GAP_MS = 1_000L
@@ -74,8 +75,14 @@ object SpeechEngine {
 
     private var recognizer: OnlineRecognizer? = null
     private var loadedModel: SpeechModels.Model? = null
-    private var finalRecognizer: OfflineRecognizer? = null
-    private var loadedFinal: SpeechModels.Model? = null
+    @Volatile private var finalRecognizer: OfflineRecognizer? = null
+    @Volatile private var loadedFinal: SpeechModels.Model? = null
+
+    /**
+     * Parakeet large holds most of the ~900 MB the two models take, so it goes after a few
+     * minutes without a command. Kroko stays: it's small, and keeps listening instant.
+     */
+    private val idleUnload = Runnable { unloadFinal("after ${IDLE_UNLOAD_MS / 60_000} minutes without use") }
     @Volatile private var run = 0
 
     /** Loads the model ahead of time, so the first command doesn't wait for it. */
@@ -89,8 +96,21 @@ object SpeechEngine {
         }
     }
 
-    /** Drops the loaded model, after the driver picks another or deletes it. */
+    private fun unloadFinal(why: String) {
+        finalWorker.execute {
+            synchronized(finalLock) {
+                val model = loadedFinal ?: return@execute
+                finalRecognizer?.release()
+                finalRecognizer = null
+                loadedFinal = null
+                GearslipLog.i("speech: unloaded ${model.label} $why")
+            }
+        }
+    }
+
+    /** Drops the loaded models: the driver picked another or deleted one, or the car went away. */
     fun unload() {
+        main.removeCallbacks(idleUnload)
         run++
         worker.execute {
             recognizer?.release()
@@ -129,6 +149,9 @@ object SpeechEngine {
         }
         val id = ++run
         fun post(block: () -> Unit) { main.post { if (id == run) block() } }
+        // Brings Parakeet back if it was unloaded, while the driver talks.
+        main.removeCallbacks(idleUnload)
+        finalWorker.execute { ensureFinalLoaded(app) }
         worker.execute {
             if (id != run) return@execute
             if (!SpeechModels.isReady(app, SpeechModels.selected.value)) return@execute post { onError(NOT_DOWNLOADED) }
@@ -145,6 +168,8 @@ object SpeechEngine {
             } finally {
                 VoiceFocus.release()
             }
+            main.removeCallbacks(idleUnload)
+            main.postDelayed(idleUnload, IDLE_UNLOAD_MS)
             if (id != run) return@execute
             post(onHeard)
             post { if (text.isEmpty()) onError("Didn't catch that.") else onResult(text) }
@@ -215,11 +240,19 @@ object SpeechEngine {
                 "(${"%.2f".format(decodeMs.toFloat() / max(1L, audioMs))} of real time)",
         )
         if (last.isEmpty() || id != run) { phrase.fill(0f); return last }
+        // Still loading (just connected, or back after going idle): the live words now beat
+        // Parakeet's in several seconds.
+        val wanted = SpeechModels.final.value
+        if (wanted == null || finalRecognizer == null || loadedFinal != wanted) {
+            if (wanted != null) GearslipLog.i("speech: ${wanted.label} isn't loaded yet, keeping the live words")
+            phrase.fill(0f)
+            return last
+        }
         onStopped()
         val started = SystemClock.uptimeMillis()
-        // Held for the whole read, so a model swap in settings can't free it mid-decode.
+        // Held for the whole read, so a model swap or the idle unload can't free it mid-decode.
         val reread = synchronized(finalLock) {
-            val final = ensureFinalLoaded(context) ?: run { phrase.fill(0f); return last }
+            val final = finalRecognizer?.takeIf { loadedFinal == wanted } ?: run { phrase.fill(0f); return last }
             final.createStream().run {
                 try {
                     acceptWaveform(phrase.copyOf(held), RATE)
