@@ -46,6 +46,10 @@ voice, state things positively, cut needless words, and use the serial comma.
 
 ## License
 
-Gearslip is licensed under AGPL-3.0, and your contributions are too. The author also sells a
-commercial license, described in [NOTICE.md](NOTICE.md). By opening a pull request, you
-agree that your contribution may be offered under that license as well.
+Gearslip is licensed under AGPL-3.0, and your contributions are too. Twink Software LLC, which
+owns Gearslip, also sells a commercial license, described in [NOTICE.md](NOTICE.md).
+
+Before we can merge your first pull request, you sign the
+[Contributor License Agreement](CLA.md). You keep the copyright in your work, and it stays
+available as free software; the agreement lets us offer it under the commercial license too.
+A bot comments on your pull request with a link, and signing takes one click.

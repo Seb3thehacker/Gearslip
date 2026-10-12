@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <!-- Only the log copies made for sharing; nothing else in the app is exposed. -->
+    <!-- Only log copies made for sharing and downloaded updates; nothing else in the app is exposed. -->
     <cache-path name="shared_logs" path="shared/" />
+    <cache-path name="updates" path="updates/" />
 </paths>

@@ -1,6 +1,7 @@
 package app.seb3thehacker.gearslip.host
 
 import app.seb3thehacker.gearslip.car.CarEnvironment
+import app.seb3thehacker.gearslip.car.CarToasts
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -9,6 +10,7 @@ import android.content.res.Configuration
 import android.graphics.Rect
 import android.location.Location
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -80,6 +82,8 @@ class CarAppConnection(private val context: Context) {
     val template: StateFlow<Template?> = _template.asStateFlow()
 
     private val main = Handler(Looper.getMainLooper())
+    /** Captured by each host Binder so callbacks queued by a replaced app cannot show a toast. */
+    private var toastOwner = Any()
 
     private var carApp: ICarApp? = null
     private var appManager: IAppManager? = null
@@ -139,7 +143,11 @@ class CarAppConnection(private val context: Context) {
             // Replaced by another connect (or a disconnect) while waiting on the location service.
             if (binding !== connection) return@bind
             var bindError: Throwable? = null
-            val flags = Context.BIND_AUTO_CREATE or LocationKeepAlive.BIND_INCLUDE_CAPABILITIES
+            // BIND_ALLOW_ACTIVITY_STARTS lets the app start its own location service while
+            // Gearslip's car window is showing. Since Android 14 a bound app only inherits that
+            // from a visible host that opts in, and MapQuest crashes as navigation starts without it.
+            val flags = Context.BIND_AUTO_CREATE or LocationKeepAlive.BIND_INCLUDE_CAPABILITIES or
+                (if (Build.VERSION.SDK_INT >= 34) Context.BIND_ALLOW_ACTIVITY_STARTS else 0)
             val bound = runCatching {
                 // Without BIND_FOREGROUND_SERVICE, an app bound by a foreground service (which is
                 // all Gearslip is once the phone screen leaves it) only reaches "important
@@ -215,6 +223,7 @@ class CarAppConnection(private val context: Context) {
     fun disconnect() = disconnect(keepLocation = false)
 
     private fun disconnect(keepLocation: Boolean) {
+        clearToasts()
         lent?.let { sendSurfaceDestroyed(it) }
         lent = null
         val carApp = this.carApp
@@ -285,7 +294,7 @@ class CarAppConnection(private val context: Context) {
             ?: Intent(Intent.ACTION_MAIN).setComponent(component)
         pendingDestination = null
         call("onAppCreate", onValue = { onCreated() }) {
-            app.onAppCreate(carHost, intent, carConfiguration(), it)
+            app.onAppCreate(createCarHost(toastOwner), intent, carConfiguration(), it)
         }
     }
 
@@ -558,14 +567,19 @@ class CarAppConnection(private val context: Context) {
 
     // --- host interfaces the app calls back into -----------------------------------------
 
-    private val appHost = object : IAppHost.Stub() {
+    private fun createAppHost(owner: Any) = object : IAppHost.Stub() {
         override fun invalidate() {
             GearslipLog.i("host: app invalidated its template")
             main.post { requestTemplate() }
         }
 
         override fun showToast(text: CharSequence?, duration: Int) {
-            GearslipLog.i("host: toast \"$text\"")
+            val message = text?.toString() ?: return
+            main.post {
+                if (toastOwner !== owner) return@post
+                GearslipLog.i("host: toast \"$message\"")
+                CarToasts.show(owner, message, duration)
+            }
         }
 
         /**
@@ -587,10 +601,19 @@ class CarAppConnection(private val context: Context) {
         override fun openMicrophone(request: Bundleable?): Bundleable? = null
     }
 
+    private val _trip = MutableStateFlow<androidx.car.app.navigation.model.Trip?>(null)
+    /** The route as the app tells clusters about it: steps and how far to each. Null when not navigating. */
+    val trip: StateFlow<androidx.car.app.navigation.model.Trip?> = _trip.asStateFlow()
+
     private val navigationHost = object : INavigationHost.Stub() {
         override fun navigationStarted() = GearslipLog.i("host: navigation started")
-        override fun navigationEnded() = GearslipLog.i("host: navigation ended")
-        override fun updateTrip(trip: Bundleable?) = Unit
+        override fun navigationEnded() {
+            GearslipLog.i("host: navigation ended")
+            _trip.value = null
+        }
+        override fun updateTrip(trip: Bundleable?) {
+            _trip.value = runCatching { trip?.get() as? androidx.car.app.navigation.model.Trip }.getOrNull()
+        }
     }
 
     /**
@@ -656,7 +679,9 @@ class CarAppConnection(private val context: Context) {
         override fun updateSuggestions(suggestions: Bundleable?) = Unit
     }
 
-    private val carHost = object : ICarHost.Stub() {
+    private fun createCarHost(owner: Any) = object : ICarHost.Stub() {
+        private val appHost = createAppHost(owner)
+
         override fun getHost(type: String?): IBinder? = when (type) {
             CarContext.APP_SERVICE -> appHost.asBinder()
             CarContext.NAVIGATION_SERVICE -> navigationHost.asBinder()
@@ -745,8 +770,14 @@ class CarAppConnection(private val context: Context) {
     }
 
     private fun fail(phase: Phase, detail: String) {
+        clearToasts()
         GearslipLog.e("host: $detail")
         update { it.copy(phase = phase, detail = detail) }
+    }
+
+    private fun clearToasts() {
+        CarToasts.clear(toastOwner)
+        toastOwner = Any()
     }
 
     private fun update(block: (Status) -> Status) {

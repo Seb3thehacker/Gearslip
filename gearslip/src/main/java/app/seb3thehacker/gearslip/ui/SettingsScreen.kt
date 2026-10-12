@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -33,12 +34,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -55,8 +58,12 @@ import androidx.compose.ui.unit.dp
 import app.seb3thehacker.gearslip.AppSettings
 import app.seb3thehacker.gearslip.BuildConfig
 import app.seb3thehacker.gearslip.CertProvider
+import app.seb3thehacker.gearslip.car.CarSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -66,7 +73,16 @@ fun SettingsScreen(
     onOpenRecommendedApps: () -> Unit,
     onOpenWhatsNew: () -> Unit,
     onReplayTutorial: () -> Unit,
+    atUsageNotes: Boolean = false,
 ) {
+    val scroll = rememberScrollState()
+    // Opened from Home's usage notes row: usage notes is the last section, so start at the end.
+    if (atUsageNotes) {
+        LaunchedEffect(Unit) {
+            snapshotFlow { scroll.maxValue }.first { it > 0 && it < Int.MAX_VALUE }
+            scroll.scrollTo(scroll.maxValue)
+        }
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -85,12 +101,13 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 24.dp)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scroll),
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             Spacer(Modifier.height(0.dp))
             AboutSection(onOpenWhatsNew, onReplayTutorial)
             ConnectionSection()
+            CarAudioSection()
             if (SHOW_RECOMMENDED_APPS) AppsSection(onOpenRecommendedApps)
             CertificateSection()
             SettingsSection("Usage notes", header = USAGE_STATS_INTRO) { UsageStatsRows() }
@@ -106,7 +123,7 @@ private fun Arrow() = Icon(
     tint = MaterialTheme.colorScheme.onSurfaceVariant,
 )
 
-/** What's new and the setup guide, one tap from the top. */
+/** What's new, updates and the setup guide, one tap from the top. */
 @Composable
 private fun AboutSection(onOpenWhatsNew: () -> Unit, onReplayTutorial: () -> Unit) {
     SettingsSection {
@@ -117,6 +134,12 @@ private fun AboutSection(onOpenWhatsNew: () -> Unit, onReplayTutorial: () -> Uni
             icon = Icons.Filled.Star,
             trailing = { Arrow() },
         )
+        SettingsDivider()
+        UpdateRow()
+        SettingsDivider()
+        UpdateAutoRow()
+        SettingsDivider()
+        UpdateBetaRow()
         SettingsDivider()
         SettingsRow(
             "Replay the setup guide",
@@ -147,6 +170,30 @@ private fun ConnectionSection() {
     }
 }
 
+/** How music reaches the car: through Gearslip over USB, or by Bluetooth as usual. */
+@Composable
+private fun CarAudioSection() {
+    val usb by CarSettings.pipeAudio.collectAsState()
+    SettingsSection(
+        "Car audio",
+        footer = "Run the command in Help once, and USB stops asking.",
+    ) {
+        SettingsRow(
+            "USB",
+            Modifier.selectable(usb, role = Role.RadioButton) { CarSettings.setPipeAudio(true) },
+            subtitle = "Sound goes through Gearslip. Android asks to share your screen each drive",
+            trailing = { RadioButton(selected = usb, onClick = null) },
+        )
+        SettingsDivider()
+        SettingsRow(
+            "Bluetooth",
+            Modifier.selectable(!usb, role = Role.RadioButton) { CarSettings.setPipeAudio(false) },
+            subtitle = "Sound plays over the phone's Bluetooth link to the car. Android never asks",
+            trailing = { RadioButton(selected = !usb, onClick = null) },
+        )
+    }
+}
+
 @Composable
 private fun AppsSection(onOpenRecommendedApps: () -> Unit) {
     SettingsSection("Apps") {
@@ -165,7 +212,8 @@ private fun CertificateSection() {
     val scope = rememberCoroutineScope()
 
     var refresh by remember { mutableIntStateOf(0) }
-    val summary by produceState<CertSummary?>(null, refresh) {
+    // The cached summary shows at once; the read still runs, in case the cert changed since.
+    val summary by produceState(CertSummary.cached, refresh) {
         value = withContext(Dispatchers.Default) { CertSummary.read(context) }
     }
 
@@ -208,7 +256,7 @@ private fun CertificateSection() {
         }
         SettingsDivider()
         SettingsRow(
-            if (downloading) "Downloading…" else "Download certificate",
+            if (downloading) "Downloading…" else "Download from aasdk",
             Modifier.clickable(enabled = !downloading) {
                 downloading = true
                 scope.launch {
@@ -222,13 +270,14 @@ private fun CertificateSection() {
                     }
                 }
             },
+            subtitle = "The certificate the open-source aasdk project publishes on GitHub. Gearslip doesn't include one",
             icon = Icons.Filled.Refresh,
         )
         SettingsDivider()
         SettingsRow(
-            "Import a certificate",
+            "Import my own file",
             Modifier.clickable { picker.launch(arrayOf("*/*")) },
-            subtitle = "A .p12 file with its private key",
+            subtitle = "A .p12 file with its private key, from wherever you choose",
             icon = Icons.Filled.Add,
         )
         val removable = when (s?.kind) {

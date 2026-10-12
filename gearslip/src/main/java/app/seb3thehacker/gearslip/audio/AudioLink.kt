@@ -60,14 +60,14 @@ class AudioLink(
     }
 
     /**
-     * The 2018 Uconnect answers our Setup with a two-byte message we cannot identify (id 255, no
-     * body) rather than the AVChannelSetupResponse the video channel gets, so the sink never
-     * reaches READY and no audio is ever sent.
+     * The 2018 Uconnect and a Dacia ULC 4.5 both answer our Setup with a two-byte message we
+     * cannot identify (id 255, no body) rather than the AVChannelSetupResponse the video channel
+     * gets, so the sink never reaches READY. [MSG_SETUP_ANSWER] takes that as the go-ahead.
      *
-     * Service discovery already told us everything that message would have: the sink is PCM at
-     * 48000Hz stereo and it has exactly one configuration. So rather than wait forever for a
-     * message that is not coming, assume the advertised configuration and carry on. If that guess
-     * is wrong the head unit simply will not ack, which the write path already reports.
+     * Service discovery already told us everything a Config would have: the sink's rate, channels
+     * and its one configuration. So for a car that answers nothing at all, wait a moment and then
+     * assume the advertised configuration. If that guess is wrong the head unit simply will not
+     * ack, which the write path already reports.
      */
     private fun armConfigFallback() {
         val timer = Thread({
@@ -76,17 +76,23 @@ class AudioLink(
             } catch (e: InterruptedException) {
                 return@Thread
             }
-            if (ready) return@Thread
-            GearslipLog.w(
-                "audio: no usable Config after ${CONFIG_WAIT_MS}ms - falling back to the sink the " +
-                    "head unit advertised (${sampleRate}Hz x$channels, config_index=0, max_unacked=$maxUnacked)",
-            )
-            configIndex = 0
-            ready = true
-            CarAudio.attach(this)
+            useAdvertisedSink("no usable Config after ${CONFIG_WAIT_MS}ms")
         }, "gearslip-audio-config").apply { isDaemon = true }
         configTimer = timer
         timer.start()
+    }
+
+    @Synchronized
+    private fun useAdvertisedSink(why: String) {
+        if (ready) return
+        configTimer?.interrupt()
+        GearslipLog.i(
+            "audio: $why - using the sink the head unit advertised " +
+                "(${sampleRate}Hz x$channels, config_index=0, max_unacked=$maxUnacked)",
+        )
+        configIndex = 0
+        ready = true
+        CarAudio.attach(this)
     }
 
     fun onMessage(messageId: Int, body: ByteArray) {
@@ -123,8 +129,10 @@ class AudioLink(
                 }
             }
 
-            // Whatever the head unit answers Setup with, we need its bytes to identify it.
-            else -> {
+            // Whatever else the head unit answers Setup with, we need its bytes to identify it.
+            else -> if (messageId == MSG_SETUP_ANSWER && body.isEmpty()) {
+                useAdvertisedSink("<- empty Setup answer (id $messageId)")
+            } else {
                 GearslipLog.i("audio: <- unhandled message id=$messageId (${body.size} bytes)")
                 GearslipLog.hex("   audio msg", body, limit = 64)
             }
@@ -243,6 +251,7 @@ class AudioLink(
         private const val MSG_STOP = 32770
         private const val MSG_CONFIG = 32771
         private const val MSG_ACK = 32772
+        private const val MSG_SETUP_ANSWER = 255
         private const val STATUS_READY = 2
         private const val FOCUS_GAIN = 1
         private const val FOCUS_RELEASE = 4
@@ -251,7 +260,7 @@ class AudioLink(
         private const val SESSION_ID = 2
         private const val STALL_MS = 2_000L
         private const val CHUNK_LOG_EVERY = 200 // about every four seconds
-        private const val CONFIG_WAIT_MS = 2_500L
+        private const val CONFIG_WAIT_MS = 1_000L
 
         private val FOCUS_STATES = mapOf(
             1 to "GAIN", 2 to "GAIN_TRANSIENT", 3 to "LOSS", 4 to "LOSS_TRANSIENT",

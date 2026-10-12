@@ -32,6 +32,8 @@ object UsageStats {
         val android: Boolean = true,
         val phone: Boolean = true,
         val cars: Boolean = true,
+        /** How each car session went: how far it got, how and when it ended. Off until ticked. */
+        val failures: Boolean = false,
     )
 
     private const val PREFS = "usage_stats"
@@ -49,6 +51,10 @@ object UsageStats {
     /** The daily background job of earlier builds, cancelled wherever it's still scheduled. */
     private const val OLD_JOB_ID = 4_207
     private const val MAX_CARS = 10
+    /** Each session for the "Where connections fail" share, waiting for the next note. */
+    private const val KEY_SESSIONS = "sessions"
+    private const val KEY_LAST_SESSIONS = "last_sessions"
+    private const val MAX_SESSIONS = 20
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -69,20 +75,27 @@ object UsageStats {
             android = p.getBoolean("share_android", true),
             phone = p.getBoolean("share_phone", true),
             cars = p.getBoolean("share_cars", true),
+            failures = p.getBoolean("share_failures", false),
         )
     }
 
     fun set(context: Context, enabled: Boolean, choices: Choices = choices(context)) {
+        val wasEnabled = enabled(context)
         prefs(context).edit()
             .putBoolean(KEY_ENABLED, enabled)
             .putBoolean(KEY_ASKED, true)
             .putBoolean("share_android", choices.android)
             .putBoolean("share_phone", choices.phone)
             .putBoolean("share_cars", choices.cars)
+            .putBoolean("share_failures", choices.failures)
             .apply()
         // Turning it on sends nothing yet: the driver may still be ticking boxes. The first note
         // waits for [choicesClosed].
-        if (!enabled) prefs(context).edit().remove(KEY_CARS).remove(KEY_LAST_CARS).remove(KEY_SENT_DAY).apply()
+        if (!enabled) prefs(context).edit().remove(KEY_CARS).remove(KEY_LAST_CARS).remove(KEY_SENT_DAY)
+            .remove(KEY_SESSIONS).remove(KEY_LAST_SESSIONS).apply()
+        if (!choices.failures) prefs(context).edit().remove(KEY_SESSIONS).remove(KEY_LAST_SESSIONS).apply()
+        // Turned on anywhere - Settings, Home, or the ask itself - answers the one-time ask.
+        if (enabled && !wasEnabled) WorkedPrompt.onSharingOn(context)
     }
 
     /** The driver left the screen with the usage note choices: send today's note if it's due. */
@@ -90,10 +103,15 @@ object UsageStats {
         if (prefs(context).getString(KEY_SENT_DAY, null) != LocalDate.now().toString()) sendSoon(context)
     }
 
-    /** Gearslip was opened: send today's note unless one already went out. */
+    /**
+     * Gearslip was opened: send today's note unless one already went out, or sooner if a session
+     * is still waiting, like one that ended in a crash before its note could go.
+     */
     fun onAppOpened(context: Context) {
         context.getSystemService(JobScheduler::class.java)?.cancel(OLD_JOB_ID)
-        if (prefs(context).getString(KEY_SENT_DAY, null) != LocalDate.now().toString()) sendSoon(context)
+        val p = prefs(context)
+        val waiting = p.getString(KEY_CARS, "[]") != "[]" || p.getString(KEY_SESSIONS, "[]") != "[]"
+        if (waiting || p.getString(KEY_SENT_DAY, null) != LocalDate.now().toString()) sendSoon(context)
     }
 
     private val sending = AtomicBoolean(false)
@@ -134,11 +152,33 @@ object UsageStats {
         outcome: String,
         screen: String = "",
         dpi: Int = 0,
+        session: JSONObject? = null,
     ) {
         if (!enabled(context)) return
         val p = prefs(context)
-        synchronized(carsLock) { addCar(p, info, protocol, outcome, screen, dpi) }
+        synchronized(carsLock) {
+            addCar(p, info, protocol, outcome, screen, dpi)
+            if (session != null && choices(context).failures) addSession(p, info, protocol, session)
+        }
         sendSoon(context)
+    }
+
+    private fun addSession(
+        p: android.content.SharedPreferences,
+        info: ServiceDiscovery.HeadUnitInfo?,
+        protocol: String,
+        session: JSONObject,
+    ) {
+        val sessions = runCatching { JSONArray(p.getString(KEY_SESSIONS, "[]")) }.getOrDefault(JSONArray())
+        if (sessions.length() >= MAX_SESSIONS) return
+        // The same car fields as the cars list, so the dashboard can line the two up.
+        session.put("name", info?.headUnitName.orEmpty())
+            .put("car", info?.carModel.orEmpty())
+            .put("year", info?.carYear.orEmpty())
+            .put("protocol", protocol)
+        sessions.put(session)
+        // Written at once: after a crash the app is about to die, and a deferred write would be lost.
+        p.edit().putString(KEY_SESSIONS, sessions.toString()).commit()
     }
 
     private fun addCar(
@@ -162,15 +202,40 @@ object UsageStats {
         // The same car and outcome twice in a day is one fact, not two.
         val seen = (0 until cars.length()).any { cars.optJSONObject(it)?.toString() == car.toString() }
         if (!seen && cars.length() < MAX_CARS) cars.put(car)
-        p.edit().putString(KEY_CARS, cars.toString()).apply()
+        p.edit().putString(KEY_CARS, cars.toString()).commit()
     }
 
-    // GrapheneOS reports the same build fields as stock Pixel firmware; its own apps give it away.
-    private fun isGrapheneOs(context: Context) =
-        runCatching { context.packageManager.getPackageInfo("app.grapheneos.setupwizard", 0) }.isSuccess
+    /**
+     * Which Android this is: a privacy OS by name, or "Stock" with the phone's brand.
+     *
+     * GrapheneOS reports the same build fields as stock Pixel firmware, so its own setup app gives
+     * it away; /e/OS is told apart from the LineageOS it's built on by its app store. The rest set
+     * build properties of their own. The iodéOS and DivestOS checks are best guesses from their
+     * build names, not confirmed on a real phone.
+     */
+    fun osName(context: Context): String {
+        fun installed(pkg: String) = runCatching { context.packageManager.getPackageInfo(pkg, 0) }.isSuccess
+        val names = listOf("ro.build.flavor", "ro.build.display.id", "ro.lineage.version")
+            .joinToString(" ") { prop(it) } + " " + Build.DISPLAY + " " + Build.FINGERPRINT
+        return when {
+            installed("app.grapheneos.setupwizard") -> "GrapheneOS"
+            prop("ro.calyxos.version").isNotEmpty() -> "CalyxOS"
+            installed("foundation.e.apps") -> "/e/OS"
+            names.contains("iode", ignoreCase = true) -> "iodéOS"
+            names.contains("divest", ignoreCase = true) -> "DivestOS"
+            prop("ro.lineage.version").isNotEmpty() -> "LineageOS"
+            else -> "Stock (${Build.BRAND.replaceFirstChar { it.uppercase() }})"
+        }
+    }
+
+    /** A system property, or "" when it isn't set or can't be read. */
+    private fun prop(name: String): String = runCatching {
+        Class.forName("android.os.SystemProperties").getMethod("get", String::class.java)
+            .invoke(null, name) as String
+    }.getOrDefault("")
 
     private fun details(context: Context, c: Choices) = JSONObject().apply {
-        if (c.android) put("android", Build.VERSION.RELEASE).put("os", if (isGrapheneOs(context)) "GrapheneOS" else "other")
+        if (c.android) put("android", Build.VERSION.RELEASE).put("os", osName(context))
         if (c.phone) put("phone", "${Build.MANUFACTURER} ${Build.MODEL}")
     }
 
@@ -203,8 +268,32 @@ object UsageStats {
             }
             note.put("cars", cars)
         }
+        if (c.failures) {
+            var sessions = runCatching { JSONArray(p.getString(KEY_SESSIONS, "[]")) }.getOrDefault(JSONArray())
+            if (everything && sessions.length() == 0) {
+                sessions = runCatching { JSONArray(p.getString(KEY_LAST_SESSIONS, "[]")) }.getOrDefault(JSONArray())
+            }
+            note.put("sessions", sessions)
+        }
         return note
     }
+
+    /**
+     * A made-up session, for "What gets sent" to show before the first real one: a 25-minute
+     * drive that ended with the car switched off.
+     */
+    val exampleSession: JSONObject
+        get() = JSONObject()
+            .put("stage", "streaming")
+            .put("ended", "byebye")
+            .put("code", "bye 1")
+            .put("failed_at", 1500)
+            .put("seconds", 1500)
+            .put("cert", "downloaded")
+            .put("name", "Head unit name")
+            .put("car", "Car model")
+            .put("year", "2021")
+            .put("protocol", "1.5")
 
     /** Sends the note now; false when it didn't get through. */
     private fun send(context: Context): Boolean {
@@ -213,6 +302,7 @@ object UsageStats {
         val p = prefs(context)
         val note = synchronized(carsLock) { preview(context) }
         val sentCars = note.optJSONArray("cars")?.toString()
+        val sentSessions = note.optJSONArray("sessions")?.toString()
         val sentDetails = if (note.has("android") || note.has("phone")) details(context, choices(context)).toString() else null
         val body = note.toString().toByteArray()
         return runCatching {
@@ -234,6 +324,16 @@ object UsageStats {
                     if (sentDetails != null) edit.putString(KEY_SENT_DETAILS, sentDetails).putString(KEY_DETAILS_DAY, LocalDate.now().toString())
                     if (sentCars != null && sentCars != "[]") edit.putString(KEY_LAST_CARS, sentCars)
                     if (sentCars == null || p.getString(KEY_CARS, "[]") == sentCars) edit.remove(KEY_CARS)
+                    if (sentSessions != null && sentSessions != "[]") edit.putString(KEY_LAST_SESSIONS, sentSessions)
+                    if (sentSessions == null || p.getString(KEY_SESSIONS, "[]") == sentSessions) {
+                        edit.remove(KEY_SESSIONS)
+                    } else if (sentSessions != "[]") {
+                        // A session ended mid-send: keep only the ones this note didn't carry.
+                        val now = JSONArray(p.getString(KEY_SESSIONS, "[]"))
+                        val sent = JSONArray(sentSessions).length()
+                        val left = JSONArray().also { for (i in sent until now.length()) it.put(now.get(i)) }
+                        edit.putString(KEY_SESSIONS, left.toString())
+                    }
                     edit.apply()
                 }
                 GearslipLog.i("stats: note sent")

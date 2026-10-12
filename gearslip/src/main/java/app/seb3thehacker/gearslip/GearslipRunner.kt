@@ -3,6 +3,8 @@ package app.seb3thehacker.gearslip
 import android.os.Build
 import app.seb3thehacker.gearslip.audio.AudioLink
 import app.seb3thehacker.gearslip.audio.CarMic
+import app.seb3thehacker.gearslip.media.CarMediaStatus
+import app.seb3thehacker.gearslip.car.ClusterNav
 import app.seb3thehacker.gearslip.car.CarAssistant
 import app.seb3thehacker.gearslip.car.CarEnvironment
 import app.seb3thehacker.gearslip.car.CarKeys
@@ -47,6 +49,8 @@ class GearslipRunner(
 
     /** Waits for the certificate only when TLS is first needed; see [run]. */
     private val tls: PhoneTls by lazy { identityTask.get() }
+    private var authenticationFailed = false
+    @Volatile private var stopped = false
 
     @Volatile private var state = State.WAIT_VERSION
     @Volatile private var lastProgress = System.currentTimeMillis()
@@ -68,6 +72,8 @@ class GearslipRunner(
     @Volatile private var inputChannelId: Int = -1
     @Volatile private var inputKeycodes: List<Int> = emptyList()
     @Volatile private var sensorChannelId: Int = -1
+    @Volatile private var mediaStatus: CarMediaStatus? = null
+    @Volatile private var clusterNav: ClusterNav? = null
     private var sensorTypes: List<Int> = emptyList()
     @Volatile private var audioLink: AudioLink? = null
     private var audioMessagesSeen = 0
@@ -107,6 +113,7 @@ class GearslipRunner(
         try {
             while (running) {
                 val read = input.read(chunk)
+                if (stopped) return
                 if (read < 0) {
                     log.w("head unit closed the connection (EOF) while in state $state")
                     reportDisconnect()
@@ -120,16 +127,19 @@ class GearslipRunner(
                 }
             }
         } catch (t: Throwable) {
+            if (stopped) return
             log.e("transport failed in state $state", t)
             SessionReport.fail(SessionReport.Category.USB, "transport failed", t, state.name)
             reportDisconnect()
         } finally {
             running = false
+            writer.shutdownNow()
             log.flush()
         }
     }
 
     fun stop() {
+        stopped = true
         running = false
         writer.shutdownNow()
         CarFocus.request = null
@@ -141,6 +151,10 @@ class GearslipRunner(
         audioLink = null
         CarSensors.clear()
         CarMic.current = null
+        mediaStatus?.stop()
+        mediaStatus = null
+        clusterNav?.stop()
+        clusterNav = null
         lastSensorNight = null
         CarEnvironment.setSensorNight(null) // back to the clock until a car says otherwise
         projection?.onProjectionStopped()
@@ -148,6 +162,8 @@ class GearslipRunner(
     }
 
     private fun handleFrame(frame: Frames.Frame) {
+        // A rejected handshake cannot consume later messages as if authentication succeeded.
+        if (authenticationFailed || stopped) return
         val payload = if (frame.encrypted) {
             if (!tls.handshakeComplete) {
                 log.w("encrypted frame arrived before the handshake finished - ignoring")
@@ -176,6 +192,10 @@ class GearslipRunner(
                 onInputMessage(messageId, body)
             } else if (frame.channel == sensorChannelId) {
                 onSensorMessage(messageId, body)
+            } else if (frame.channel == clusterNav?.channelId) {
+                clusterNav?.onMessage(messageId, body)
+            } else if (frame.channel == mediaStatus?.channelId) {
+                mediaStatus?.onMessage(messageId, body)
             } else if (frame.channel == CarMic.current?.channelId) {
                 CarMic.current?.onMessage(messageId, body)
             } else if (frame.channel == audioLink?.channelId) {
@@ -225,7 +245,7 @@ class GearslipRunner(
         }
         log.w("<- ByeByeRequest: reason=$reason ($name) in state $state")
         log.hex("   byebye raw", body)
-        SessionReport.fail(SessionReport.Category.BYEBYE, "ByeByeRequest reason=$reason ($name)", state.name)
+        SessionReport.fail(SessionReport.Category.BYEBYE, "ByeByeRequest reason=$reason ($name)", state.name, "bye $reason")
         send(MSG_BYEBYE_RESPONSE, ByteArray(0), encrypted = true)
         log.i("-> ByeByeResponse")
     }
@@ -262,10 +282,14 @@ class GearslipRunner(
     }
 
     private fun onHandshake(body: ByteArray) {
+        if (state != State.TLS_HANDSHAKE && state != State.WAIT_AUTH) return
         log.i("<- EncapsulatedSSL (${body.size} bytes)")
         val replies = try {
-            tls.pumpHandshake(body)
+            val preparedTls = tls
+            if (stopped) return
+            preparedTls.pumpHandshake(body)
         } catch (t: Throwable) {
+            if (stopped) return
             log.e("TLS handshake threw", t)
             SessionReport.fail(SessionReport.Category.TLS, "handshake threw", t, state.name)
             log.verdict(
@@ -278,9 +302,11 @@ class GearslipRunner(
                 "The head unit aborted the secure handshake. It validates the phone's certificate.",
             )
             state = State.DONE
+            authenticationFailed = true
             SessionReport.print()
             return
         }
+        if (stopped) return
         replies.forEach {
             send(MSG_ENCAPSULATED_SSL, it, encrypted = false)
             log.i("-> EncapsulatedSSL (${it.size} bytes)")
@@ -293,6 +319,7 @@ class GearslipRunner(
 
     private fun onAuthComplete(body: ByteArray) {
         val status = Protobuf.readInt32Field(body, 1)
+        if (state != State.WAIT_AUTH && !(state == State.TLS_HANDSHAKE && status in listOf(-2, -3))) return
         log.i("<- AuthComplete: status=$status")
         status?.let { SessionReport.auth(it) }
 
@@ -304,7 +331,7 @@ class GearslipRunner(
                 sendServiceDiscoveryRequest()
             }
             -2 -> {
-                SessionReport.fail(SessionReport.Category.CERTIFICATE, "AuthComplete status -2 (certificate error)", state.name)
+                SessionReport.fail(SessionReport.Category.CERTIFICATE, "AuthComplete status -2 (certificate error)", state.name, "auth -2")
                 log.verdict(
                     "NOT VIABLE (STATUS_CERTIFICATE_ERROR)",
                     "The head unit explicitly rejected the phone's self-signed certificate. " +
@@ -316,9 +343,10 @@ class GearslipRunner(
                     "The head unit refused the phone's certificate (certificate error).",
                 )
                 state = State.DONE
+                authenticationFailed = true
             }
             -3 -> {
-                SessionReport.fail(SessionReport.Category.AUTH, "AuthComplete status -3 (authentication failure)", state.name)
+                SessionReport.fail(SessionReport.Category.AUTH, "AuthComplete status -3 (authentication failure)", state.name, "auth -3")
                 log.verdict(
                     "NOT VIABLE (STATUS_AUTHENTICATION_FAILURE)",
                     "Authentication rejected. Broader than a pure certificate error, but the " +
@@ -329,9 +357,10 @@ class GearslipRunner(
                     "Authentication failed. The head unit does not trust the certificate in use.",
                 )
                 state = State.DONE
+                authenticationFailed = true
             }
             else -> {
-                SessionReport.fail(SessionReport.Category.AUTH, "AuthComplete status $status (unexpected)", state.name)
+                SessionReport.fail(SessionReport.Category.AUTH, "AuthComplete status $status (unexpected)", state.name, "auth $status")
                 log.verdict(
                     "INCONCLUSIVE (AuthComplete status=$status)",
                     "Unexpected status. Check MessageStatus.proto in aasdk for the meaning " +
@@ -339,6 +368,7 @@ class GearslipRunner(
                 )
                 SessionStatus.failed("Unexpected response", "The head unit answered authentication with status $status.")
                 state = State.DONE
+                authenticationFailed = true
             }
         }
     }
@@ -399,7 +429,7 @@ class GearslipRunner(
         val video = ServiceDiscovery.findVideoService(serviceDiscoveryResponse)
         if (video == null) {
             log.w("no video service in the discovery response - cannot start Phase A")
-            SessionReport.fail(SessionReport.Category.VIDEO, "head unit advertised no video service", state.name)
+            SessionReport.fail(SessionReport.Category.VIDEO, "head unit advertised no video service", state.name, "no video service")
             return
         }
         videoChannelId = video.serviceId
@@ -417,6 +447,8 @@ class GearslipRunner(
         startAudioChannel(serviceDiscoveryResponse)
         startSensorChannel(serviceDiscoveryResponse)
         startMicChannel(serviceDiscoveryResponse)
+        startMediaStatusChannel(serviceDiscoveryResponse)
+        startClusterNavChannel(serviceDiscoveryResponse)
 
         val input = ServiceDiscovery.findInputService(serviceDiscoveryResponse, video.displayId)
         if (input == null) {
@@ -476,6 +508,28 @@ class GearslipRunner(
         log.i("car microphone: channel=${mic.serviceId} ${mic.codecName} ${config.sampleRate}Hz/${config.bits}bit/x${config.channels}")
         CarMic.current = CarMic(mic) { id, body -> send(id, body, encrypted = true, channel = mic.serviceId) }
         openChannel(mic.serviceId)
+    }
+
+    /** What's playing, for the car's own screens: the cluster, the media source page. */
+    private fun startMediaStatusChannel(serviceDiscoveryResponse: ByteArray) {
+        val channel = ServiceDiscovery.findMediaStatusChannel(serviceDiscoveryResponse) ?: run {
+            log.i("no media status channel - the car's own screens won't show what's playing")
+            return
+        }
+        log.i("media status channel: $channel")
+        mediaStatus = CarMediaStatus(channel) { id, body -> send(id, body, encrypted = true, channel = channel) }
+        openChannel(channel)
+    }
+
+    /** Turn-by-turn for the instrument cluster: the next turn, its road, and how far. */
+    private fun startClusterNavChannel(serviceDiscoveryResponse: ByteArray) {
+        val channel = ServiceDiscovery.findNavStatusChannel(serviceDiscoveryResponse) ?: run {
+            log.i("no navigation status channel - the cluster won't show turns")
+            return
+        }
+        log.i("navigation status channel: $channel")
+        clusterNav = ClusterNav(channel) { id, body -> send(id, body, encrypted = true, channel = channel) }
+        openChannel(channel)
     }
 
     /**
@@ -1065,10 +1119,10 @@ class GearslipRunner(
 
     private fun reportDisconnect() {
         when (state) {
-            State.WAIT_VERSION -> SessionReport.fail(SessionReport.Category.NO_HANDSHAKE, "no VersionRequest arrived", state.name)
-            State.TLS_HANDSHAKE -> SessionReport.fail(SessionReport.Category.TLS, "head unit dropped the link during TLS", state.name)
-            State.WAIT_AUTH -> SessionReport.fail(SessionReport.Category.AUTH, "dropped after TLS, before AuthComplete", state.name)
-            State.WAIT_SDR -> SessionReport.fail(SessionReport.Category.SERVICE_DISCOVERY, "accepted, then dropped before service discovery", state.name)
+            State.WAIT_VERSION -> SessionReport.fail(SessionReport.Category.NO_HANDSHAKE, "no VersionRequest arrived", state.name, "closed")
+            State.TLS_HANDSHAKE -> SessionReport.fail(SessionReport.Category.TLS, "head unit dropped the link during TLS", state.name, "closed")
+            State.WAIT_AUTH -> SessionReport.fail(SessionReport.Category.AUTH, "dropped after TLS, before AuthComplete", state.name, "closed")
+            State.WAIT_SDR -> SessionReport.fail(SessionReport.Category.SERVICE_DISCOVERY, "accepted, then dropped before service discovery", state.name, "closed")
             State.DONE -> {}
         }
         when (state) {

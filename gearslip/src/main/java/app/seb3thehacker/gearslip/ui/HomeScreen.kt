@@ -2,6 +2,7 @@ package app.seb3thehacker.gearslip.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,6 +32,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -41,6 +43,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import app.seb3thehacker.gearslip.BuildConfig
 import app.seb3thehacker.gearslip.SessionStatus
 import app.seb3thehacker.gearslip.notify.TestMessage
+import app.seb3thehacker.gearslip.stats.WorkedPrompt
 
 @Composable
 fun HomeScreen(
@@ -48,81 +51,104 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
     onOpenCarPreview: () -> Unit,
     onOpenHelp: () -> Unit,
+    onOpenUsageNotes: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
     val status by SessionStatus.state.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val workedCar by remember { WorkedPrompt.pending(context) }.collectAsStateWithLifecycle()
+    val live = status.phase == SessionStatus.Phase.CONNECTING ||
+        status.phase == SessionStatus.Phase.PROJECTING
 
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 24.dp),
-        ) {
+    val celebrate by WorkedPrompt.celebrate.collectAsStateWithLifecycle()
+    Box {
+        Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
             Column(
                 Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 24.dp),
             ) {
-                Spacer(Modifier.height(24.dp))
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
                 ) {
-                    Text(
-                        "Gearslip",
-                        style = MaterialTheme.typography.displayLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    IconButton(
-                        onClick = onOpenSettings,
-                        modifier = Modifier.size(56.dp),
+                    Spacer(Modifier.height(24.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings", modifier = Modifier.size(40.dp))
+                        Text(
+                            "Gearslip",
+                            style = MaterialTheme.typography.displayLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        IconButton(
+                            onClick = onOpenSettings,
+                            modifier = Modifier.size(56.dp),
+                        ) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings", modifier = Modifier.size(40.dp))
+                        }
                     }
-                }
-                Text(
-                    "v${LocalContext.current.appVersionName()}",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(16.dp))
-                StatusCard(status)
-                Spacer(Modifier.height(16.dp))
-                if (status.phase != SessionStatus.Phase.PROJECTING) WirelessCard()
-            }
-
-            // Sits at the bottom, where a thumb reaches it.
-            Column(Modifier.padding(vertical = 16.dp)) {
-                val live = status.phase == SessionStatus.Phase.CONNECTING ||
-                    status.phase == SessionStatus.Phase.PROJECTING
-                if (live) {
-                    Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-                        Text("Disconnect")
+                    Text(
+                        "v${LocalContext.current.appVersionName()}",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    StatusCard(status)
+                    // The first drive that worked asks once to share it, right under the result.
+                    val car = workedCar
+                    if (car != null && !live) {
+                        Spacer(Modifier.height(16.dp))
+                        WorkedCard(car, onSeeWhatsSent = onOpenUsageNotes)
                     }
                     Spacer(Modifier.height(16.dp))
+                    UpdateCard()
+                    if (status.phase != SessionStatus.Phase.PROJECTING) {
+                        Spacer(Modifier.height(16.dp))
+                        WirelessCard()
+                    }
                 }
 
-                Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.extraLarge) {
-                    Column {
-                        if (!live) {
-                            ActionRow(Icons.Filled.PlayArrow, "Car preview", onOpenCarPreview)
-                            RowDivider()
+                // Sits at the bottom, where a thumb reaches it.
+                Column(Modifier.padding(vertical = 16.dp)) {
+                    if (live) {
+                        Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                            Text("Disconnect")
                         }
-                        ActionRow(Icons.Filled.List, "Live logs", onOpenLogs)
-                        RowDivider()
-                        ActionRow(Icons.Filled.Info, "Connection help", onOpenHelp)
-                        if (BuildConfig.DEBUG) {
-                            val context = LocalContext.current
+                        Spacer(Modifier.height(16.dp))
+                    }
+
+                    // Not while the card above is asking the same thing.
+                    if (workedCar == null || live) {
+                        UsageNotesHomeCard(onOpen = onOpenUsageNotes)
+                        Spacer(Modifier.height(16.dp))
+                    }
+
+                    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.extraLarge) {
+                        Column {
+                            if (!live) {
+                                ActionRow(Icons.Filled.PlayArrow, "Car preview", onOpenCarPreview)
+                                RowDivider()
+                            }
+                            ActionRow(Icons.Filled.List, "Live logs", onOpenLogs)
                             RowDivider()
-                            ActionRow(Icons.Filled.Send, "Send a test message") { TestMessage.post(context) }
+                            ActionRow(Icons.Filled.Info, "Connection help", onOpenHelp)
+                            if (BuildConfig.DEBUG) {
+                                RowDivider()
+                                ActionRow(Icons.Filled.Send, "Send a test message") { TestMessage.post(context) }
+                            }
                         }
                     }
                 }
             }
         }
+        // Sharing just went on from the "it worked" ask: a little thanks.
+        if (celebrate) ConfettiFall(onDone = WorkedPrompt::celebrated)
     }
 }
 

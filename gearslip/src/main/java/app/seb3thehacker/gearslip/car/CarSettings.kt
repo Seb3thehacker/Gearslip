@@ -2,6 +2,7 @@ package app.seb3thehacker.gearslip.car
 
 import android.content.Context
 import app.seb3thehacker.gearslip.AppSettings
+import app.seb3thehacker.gearslip.audio.CarAudio
 import app.seb3thehacker.gearslip.car.theme.GsTheme
 import app.seb3thehacker.gearslip.car.theme.GsThemes
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,7 @@ object CarSettings {
     private const val KEY_OPEN = "car_open_on_connect"
     private const val KEY_NIGHT = "car_night_mode"
     private const val KEY_PIPE_AUDIO = "car_pipe_audio"
+    private const val KEY_AUDIO_CHOICE_ASKED = "car_audio_choice_asked"
     private const val KEY_LAST_NAV = "car_last_nav"
     private const val KEY_LAST_MEDIA = "car_last_media"
     private const val KEY_AUTOPLAY = "car_autoplay"
@@ -148,9 +150,19 @@ object CarSettings {
      * Whether a media app's sound is captured and sent over the car link. On by default, since
      * sound in the car is the point of the exercise; the platform allows the capture only behind a
      * consent dialog, which [app.seb3thehacker.gearslip.audio.CarAudio] raises once the car has
-     * somewhere to play it. Turned off, the app plays through the phone's normal output instead.
+     * somewhere to play it. Turned off ("Bluetooth" in the settings), the app plays through the
+     * phone's normal output instead, and Android never asks.
      */
     val pipeAudio: StateFlow<Boolean> = pipeAudioFlow
+
+    /**
+     * Whether the driver has already been offered Bluetooth after turning down the capture
+     * dialog. Offered once only: someone who chose to keep the USB route shouldn't be nagged.
+     */
+    val audioChoiceAsked: Boolean
+        get() = AppSettings.getString(app, KEY_AUDIO_CHOICE_ASKED, "false") == "true"
+
+    fun markAudioChoiceAsked() = AppSettings.putString(app, KEY_AUDIO_CHOICE_ASKED, "true")
 
     /**
      * Off by default: a driver has to opt into experimental features as a whole before any of
@@ -265,9 +277,15 @@ object CarSettings {
         AppSettings.putString(app, KEY_AUTOPLAY, on.toString())
     }
 
+    /**
+     * Takes effect at once: switching to Bluetooth mid-drive stops the capture, and switching
+     * back asks for it again (or waits for the car, if none is connected).
+     */
     fun setPipeAudio(on: Boolean) {
+        if (pipeAudioFlow.value == on) return
         pipeAudioFlow.value = on
         AppSettings.putString(app, KEY_PIPE_AUDIO, on.toString())
+        if (on) CarAudio.request() else CarAudio.release()
     }
 
     fun setExperimentalFeaturesEnabled(on: Boolean) {

@@ -14,8 +14,17 @@ data class CertSummary(
     val validUntil: String?,
 ) {
     companion object {
+        /**
+         * The last [read], so Settings draws the certificate row at once instead of a second
+         * later, which shifted everything under it. Null until the first read.
+         */
+        @Volatile var cached: CertSummary? = null
+            private set
+
         /** Blocking (parses a key store): call from a background dispatcher. */
-        fun read(context: Context): CertSummary {
+        fun read(context: Context): CertSummary = readNow(context).also { cached = it }
+
+        private fun readNow(context: Context): CertSummary {
             val identity = CertProvider.loadSupplied(context)
                 ?: return CertSummary(
                     CertProvider.Kind.SELF_SIGNED,

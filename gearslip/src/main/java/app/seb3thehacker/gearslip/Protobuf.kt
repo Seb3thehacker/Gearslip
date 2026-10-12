@@ -31,6 +31,9 @@ object Protobuf {
         return varint(((field shl 3) or 2).toLong()) + varint(bytes.size.toLong()) + bytes
     }
 
+    fun bytesField(field: Int, bytes: ByteArray): ByteArray =
+        varint(((field shl 3) or 2).toLong()) + varint(bytes.size.toLong()) + bytes
+
     fun varintField(field: Int, value: Long): ByteArray =
         varint((field shl 3).toLong()) + varint(value)
 

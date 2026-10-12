@@ -15,6 +15,8 @@ import android.view.Surface
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
 import android.content.res.Configuration
@@ -87,8 +89,12 @@ class GearslipActivity : ComponentActivity(), Projection {
         } else {
             GearslipLog.w("audio: capture consent declined")
             CarAudio.denied()
+            if (!CarSettings.audioChoiceAsked) offerBluetooth.value = true
         }
     }
+
+    /** Raised once, after the first "no" to the capture dialog; see [AudioChoiceDialog]. */
+    private val offerBluetooth = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     private val detachReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -134,6 +140,20 @@ class GearslipActivity : ComponentActivity(), Projection {
         setContent {
             GearslipTheme {
                 GearslipApp(onDisconnect = { closeAccessory() }, onRequestCallScreening = ::requestCallScreeningRole)
+                val offer by offerBluetooth.collectAsState()
+                if (offer) {
+                    fun close() {
+                        CarSettings.markAudioChoiceAsked()
+                        offerBluetooth.value = false
+                    }
+                    app.seb3thehacker.gearslip.ui.AudioChoiceDialog(
+                        onUseBluetooth = {
+                            CarSettings.setPipeAudio(false)
+                            close()
+                        },
+                        onKeepAsking = ::close,
+                    )
+                }
             }
         }
 
@@ -158,6 +178,7 @@ class GearslipActivity : ComponentActivity(), Projection {
         super.onStart()
         Prefetch.warm(this)
         UsageStats.onAppOpened(this)
+        app.seb3thehacker.gearslip.update.UpdateChecker.onAppOpened(this)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -371,6 +392,8 @@ class GearslipActivity : ComponentActivity(), Projection {
     }
 
     override fun onProjectionStopped() {
+        // Before the car UI goes, while the media connection is still up.
+        app.seb3thehacker.gearslip.car.CarServices.pausePhoneMedia()
         runOnUiThread {
             PhoneMirror.requestStop()
             app.seb3thehacker.gearslip.car.CarKeys.focusSink = null

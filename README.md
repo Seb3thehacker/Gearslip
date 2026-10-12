@@ -6,6 +6,11 @@ An Android Auto alternative built for everyone.
 
 [<img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="54">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/Seb3thehacker/gearslip)
 
+## Which cars work
+
+Most cars work. Starting around 2020, some cars added newer security standards that reject
+Gearslip's certificate, and Gearslip can't run in those cars.
+
 ## What Gearslip is
 
 Gearslip is an Android Auto client for the phone. It speaks the Android Auto protocol
@@ -63,8 +68,6 @@ mode.
 - **Some apps refuse Gearslip.** Spotify, Waze, and Google Messages use a version of
   Google's car library that accepts only Android Auto itself. Spotify still plays through
   Gearslip's own player.
-- **Gearslip works best with cars from before 2020.** Some newer head units reject its
-  certificate.
 - **Calls use the car's Bluetooth,** as they do in Android Auto. Pair the phone with the
   car to hear calls through its speakers.
 - **Audio reaches the car by capturing playback, not by mirroring the screen.** Android

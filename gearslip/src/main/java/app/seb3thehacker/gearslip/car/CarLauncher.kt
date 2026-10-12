@@ -187,6 +187,8 @@ private fun groupOf(entry: Entry, mediaPackages: Set<String>): AppGroup {
     return when (app.kind) {
         "calling" -> AppGroup.PHONE
         "navigation", "poi", "parking", "charging" -> AppGroup.MAPS
+        // Template-only media apps may have no legacy browser/player tile to identify them.
+        "media" -> AppGroup.MUSIC
         "messaging" -> AppGroup.MESSAGING
         "settings" -> AppGroup.SETTINGS
         else -> AppGroup.OTHER
