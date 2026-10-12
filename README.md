@@ -100,9 +100,8 @@ turn them on, in setup or in Settings.
   anything you type or play.
 - **How phones are counted.** A random number counts each phone once. The server keeps
   only a salted hash of it.
-- **Where they go.** To a Cloudflare Worker, whose code is in
-  [stats-worker/](stats-worker/). Cloudflare sees your IP address in delivering a note,
-  as it would for any website; the Worker doesn't store it.
+- **Where they go.** To Gearslip's server. Like any website, it sees your IP address when a
+  note arrives, and it doesn't store it.
 
 Turn the notes off, and they stop at once.
 
