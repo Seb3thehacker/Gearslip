@@ -47,3 +47,25 @@ fun AudioChoiceDialog(onUseBluetooth: () -> Unit, onKeepAsking: () -> Unit) {
         dismissButton = { TextButton(onClick = onKeepAsking) { Text("Keep asking") } },
     )
 }
+
+/**
+ * Android lets an app capture other apps' audio only while it holds the microphone permission.
+ * Once the driver has refused that twice, Android stops asking, and music silently stays on the
+ * phone; this says why and where to turn it back on.
+ */
+@Composable
+fun MicBlockedDialog(onOpenSettings: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Car audio needs the microphone permission") },
+        text = {
+            Text(
+                "Android lets an app send other apps' sound to the car only if it has the " +
+                    "microphone permission. It's turned off for Gearslip, so music plays on the " +
+                    "phone. Turn it on under Permissions, then Microphone.",
+            )
+        },
+        confirmButton = { TextButton(onClick = onOpenSettings) { Text("Open app settings") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Not now") } },
+    )
+}

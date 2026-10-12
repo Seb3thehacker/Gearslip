@@ -449,10 +449,13 @@ private sealed interface LyricsState {
 
 @Composable
 private fun AudioBadge(capture: CarAudio.Capture) {
+    val micBlocked by CarAudio.micBlocked.collectAsStateWithLifecycle()
     val text = when (capture) {
         CarAudio.Capture.ON -> "Audio to car"
         CarAudio.Capture.ASKING -> "Allow audio capture on the phone"
-        CarAudio.Capture.DENIED -> "Audio stays on the phone"
+        CarAudio.Capture.DENIED ->
+            if (micBlocked) "Audio stays on the phone: turn on Gearslip's microphone permission"
+            else "Audio stays on the phone"
         CarAudio.Capture.OFF -> return
     }
     Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)

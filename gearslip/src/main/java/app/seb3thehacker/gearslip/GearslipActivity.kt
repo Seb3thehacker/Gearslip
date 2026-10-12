@@ -8,8 +8,10 @@ import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.provider.Settings
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.WindowManager
@@ -74,7 +76,13 @@ class GearslipActivity : ComponentActivity(), Projection {
     private val audioPermission = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) askAudioCapture() else {
+        if (granted) askAudioCapture()
+        else if (!shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO)) {
+            // Refused twice: Android now says no without showing anything, so the phone must.
+            GearslipLog.w("audio: record permission blocked - Android no longer asks")
+            CarAudio.micBlocked()
+            micBlockedNotice.value = true
+        } else {
             GearslipLog.w("audio: record permission declined")
             CarAudio.denied()
         }
@@ -90,6 +98,9 @@ class GearslipActivity : ComponentActivity(), Projection {
             if (!CarSettings.audioChoiceAsked) offerBluetooth.value = true
         }
     }
+
+    /** Raised when the microphone permission is blocked; see [MicBlockedDialog]. */
+    private val micBlockedNotice = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     /** Raised once, after the first "no" to the capture dialog; see [AudioChoiceDialog]. */
     private val offerBluetooth = kotlinx.coroutines.flow.MutableStateFlow(false)
@@ -148,6 +159,18 @@ class GearslipActivity : ComponentActivity(), Projection {
                         onKeepAsking = ::close,
                     )
                 }
+                val micNotice by micBlockedNotice.collectAsState()
+                if (micNotice) {
+                    app.seb3thehacker.gearslip.ui.MicBlockedDialog(
+                        onOpenSettings = {
+                            micBlockedNotice.value = false
+                            startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)),
+                            )
+                        },
+                        onDismiss = { micBlockedNotice.value = false },
+                    )
+                }
             }
         }
 
@@ -173,6 +196,10 @@ class GearslipActivity : ComponentActivity(), Projection {
         Prefetch.warm(this)
         UsageStats.onAppOpened(this)
         app.seb3thehacker.gearslip.update.UpdateChecker.onAppOpened(this)
+        // Back from the app's settings with the microphone turned on: try car audio again.
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            CarAudio.micAllowed()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
