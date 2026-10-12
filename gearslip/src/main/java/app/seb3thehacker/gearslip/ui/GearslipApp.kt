@@ -16,11 +16,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -141,8 +139,6 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
         // A car keyboard is open: offer the phone's own, for a passenger.
         if (screen != Screen.CAR_PREVIEW) PhoneTypingBar()
     }
-
-    CompatWarning()
 }
 
 /**
@@ -165,31 +161,5 @@ private fun DevBuildBanner() {
                 fontWeight = FontWeight.Bold,
             )
         }
-    }
-}
-
-/** Shown once, on first run: the certificate is known to fail on head units newer than ~2020. */
-@Composable
-private fun CompatWarning() {
-    val context = LocalContext.current
-    var visible by rememberSaveable { mutableStateOf(!AppSettings.hasSeenCompatWarning(context)) }
-
-    if (visible) {
-        AlertDialog(
-            onDismissRequest = {},
-            title = { Text("Before you plug in") },
-            text = {
-                Text(
-                    "Gearslip works with cars built before 2020. " +
-                        "Newer firmware often blocks the connection.",
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    AppSettings.setSeenCompatWarning(context)
-                    visible = false
-                }) { Text("Got it") }
-            },
-        )
     }
 }
