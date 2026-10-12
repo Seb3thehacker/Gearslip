@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothServerSocket
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.net.ConnectivityManager
@@ -69,6 +70,7 @@ object WirelessLink {
     private const val MSG_PING = 8
     private const val MSG_PONG = 9
 
+    private const val LISTEN_MS = 120_000 // time to reconnect the phone from the car's Bluetooth menu
     private const val TCP_TRIES = 12 // about a minute: a car's projection listener can start well after its Wi-Fi
     private const val WIFI_WAIT_MS = 60_000
 
@@ -76,6 +78,7 @@ object WirelessLink {
     @Volatile var onConnected: ((Socket) -> Unit)? = null
 
     @Volatile private var rfcomm: BluetoothSocket? = null
+    @Volatile private var listener: BluetoothServerSocket? = null
     @Volatile private var tcp: Socket? = null
     @Volatile private var network: ConnectivityManager.NetworkCallback? = null
     @Volatile private var worker: Thread? = null
@@ -109,6 +112,8 @@ object WirelessLink {
     fun stop(context: Context) {
         worker?.interrupt()
         worker = null
+        runCatching { listener?.close() }
+        listener = null
         runCatching { rfcomm?.close() }
         rfcomm = null
         runCatching { tcp?.close() }
@@ -143,13 +148,10 @@ object WirelessLink {
             )
             return
         } catch (e: IOException) {
-            log.e("Bluetooth: could not open the Android Auto channel on $name", e)
-            SessionStatus.failed(
-                "Car didn't answer over Bluetooth",
-                "$name has no wireless Android Auto service, or it's turned off in the car. Check that " +
-                    "the car is paired and wireless Android Auto is on.",
-            )
-            return
+            // Most factory head units publish no service of their own: they look for the phone's
+            // and connect to it, so wait for the car instead.
+            log.i("Bluetooth: $name has no Android Auto service to call (${e.message}); waiting for it to call us")
+            waitForCar(context, name) ?: return
         }
         rfcomm = socket
         log.i("Bluetooth: channel open")
@@ -217,6 +219,44 @@ object WirelessLink {
             }
         } catch (e: IOException) {
             if (rfcomm != null) log.w("Bluetooth: channel closed (${e.message})")
+        }
+    }
+
+    /**
+     * Publishes the Android Auto service on the phone, the way Android Auto itself does, and waits
+     * for the car to connect to it. A car looks for the service when the phone connects over
+     * Bluetooth, so the driver may have to reconnect the phone from the car's menu.
+     */
+    @SuppressLint("MissingPermission")
+    private fun waitForCar(context: Context, name: String): BluetoothSocket? {
+        val adapter = context.getSystemService(BluetoothManager::class.java)?.adapter ?: return null
+        val server = try {
+            adapter.listenUsingRfcommWithServiceRecord("Android Auto", AA_UUID)
+        } catch (e: Exception) {
+            log.e("Bluetooth: couldn't publish the Android Auto service", e)
+            SessionStatus.failed("Couldn't publish the Android Auto service", "${e.javaClass.simpleName}: ${e.message}")
+            return null
+        }
+        listener = server
+        SessionStatus.connecting("Waiting for $name. If nothing happens, disconnect the phone in the car's Bluetooth menu and connect it again")
+        log.i("Bluetooth: Android Auto service published, waiting ${LISTEN_MS / 1000}s for $name")
+        return try {
+            server.accept(LISTEN_MS).also {
+                val from = runCatching { it.remoteDevice.name }.getOrNull() ?: "a device"
+                log.i("Bluetooth: $from connected to the Android Auto service")
+            }
+        } catch (e: IOException) {
+            if (listener == null) return null // stopped
+            log.w("Bluetooth: no car connected within ${LISTEN_MS / 1000}s (${e.message})")
+            SessionStatus.failed(
+                "Car didn't connect over Bluetooth",
+                "$name didn't open Android Auto with the phone. Check that wireless Android Auto is " +
+                    "on in the car's settings, then reconnect the phone from the car's Bluetooth menu.",
+            )
+            null
+        } finally {
+            runCatching { server.close() }
+            listener = null
         }
     }
 
