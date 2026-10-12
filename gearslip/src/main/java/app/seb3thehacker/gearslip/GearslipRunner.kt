@@ -265,11 +265,10 @@ class GearslipRunner(
         log.i("<- VersionRequest: head unit speaks $major.$minor")
         SessionReport.protocolVersion(major, minor)
 
-        // PROTOCOL-DOWNGRADE EXPERIMENT. The 2018 Uconnect speaks 1.3 and ACCEPTS the JVC cert;
-        // the 2025 unit speaks 4.3 and rejects it at AuthComplete (-3). If the 4.3 identity check
-        // is tied to the *negotiated* protocol version rather than baked into the firmware,
-        // claiming an older version makes the newer unit skip the check entirely. CLAIM_VERSION
-        // = null restores the previous echo-the-head-unit behaviour.
+        // Always 1.3, on purpose. Every car that accepts Gearslip was tested this way, 1.5 units
+        // included. Echoing the car's own version was tried too: a 4.3 unit rejected the
+        // certificate either way, so the version doesn't decide acceptance. The log says so, since
+        // a car offering 1.5 and getting 1.3 back looks like a bug to anyone reading it.
         val claim = CLAIM_VERSION ?: (major to minor)
         val response = byteArrayOf(
             ((claim.first shr 8) and 0xFF).toByte(), (claim.first and 0xFF).toByte(),
@@ -279,7 +278,10 @@ class GearslipRunner(
         send(MSG_VERSION_RESPONSE, response, encrypted = false)
         log.i(
             "-> VersionResponse: ${claim.first}.${claim.second} status=0 (STATUS_SUCCESS)" +
-                if (CLAIM_VERSION != null) " [FORCED; head unit offered $major.$minor]" else "",
+                if (CLAIM_VERSION != null && claim != (major to minor)) {
+                    " - intended: Gearslip always answers ${claim.first}.${claim.second}, which cars " +
+                        "offering $major.$minor accept too"
+                } else "",
         )
         state = State.TLS_HANDSHAKE
         SessionStatus.connecting("Securing the link")
@@ -1214,9 +1216,9 @@ class GearslipRunner(
 
     private companion object {
         /**
-         * Force the protocol version Gearslip claims in VersionResponse, as (major, minor), or
-         * null to echo the head unit. 1.3 is what the 2018 Uconnect (which accepts the JVC cert)
-         * speaks. This is the 2025 identity-check downgrade experiment: see onVersionRequest.
+         * The protocol version Gearslip answers every car with, as (major, minor), or null to echo
+         * the head unit's. Kept at 1.3 because every working car was tested with it; see
+         * onVersionRequest.
          */
         val CLAIM_VERSION: Pair<Int, Int>? = 1 to 3
 
