@@ -54,6 +54,9 @@ private val recommended = listOf(
         RecommendedApp("ViVi Music", "com.vivi.vivimusic", "https://github.com/vivizzz007/vivi-music", "A YouTube Music player."),
         RecommendedApp("Metrolist", "com.metrolist.music", "https://github.com/MetrolistGroup/Metrolist", "A YouTube Music player."),
     ),
+    "Podcasts" to listOf(
+        RecommendedApp("AntennaPod", "de.danoeh.antennapod", "https://github.com/AntennaPod/AntennaPod", "Podcasts, chapters and all."),
+    ),
 )
 
 /** Opened from Settings: the same list the setup guide ends with. */

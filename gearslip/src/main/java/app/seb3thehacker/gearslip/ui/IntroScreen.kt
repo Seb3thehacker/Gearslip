@@ -123,7 +123,7 @@ private fun introColors(): IntroColors {
     )
 }
 
-private enum class IntroStep { WELCOME, WIRELESS, KNOBS, VOICE, GRAPHENE, THANKS, DRIVE }
+private enum class IntroStep { WELCOME, WIRELESS, KNOBS, VOICE, GRAPHENE, THANKS, APPS, DRIVE }
 
 private val Pop = CubicBezierEasing(0.3f, 1.6f, 0.5f, 1f)
 private val Rise = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
@@ -180,6 +180,9 @@ fun IntroScreen(onDone: () -> Unit) {
             IntroStep.THANKS -> BadgeStep(c, ::cq, ::cqSp, c.tertiaryC, "Thank you.",
                 "To everyone sending usage notes: they show me which cars Gearslip works in and which " +
                     "ones still fail, so I know what to fix next. Every note helps.", step) { HeartIcon(c.onTertiaryC) }
+            IntroStep.APPS -> BadgeStep(c, ::cq, ::cqSp, c.secondaryC, "Good company.",
+                "Free, open-source apps that work well in the car. Tap one to see it on GitHub.", step,
+                extra = { AppPicks(c, ::cq, ::cqSp, step) }) { StarIcon(c.onSecondaryC) }
             IntroStep.DRIVE -> BadgeStep(c, ::cq, ::cqSp, c.primaryC, "Let's drive.",
                 "That's ${Intro.release}. Plug in, or just get in.", step,
                 action = "Start" to finish) { CheckIcon(c.onPrimaryC) }
@@ -412,7 +415,7 @@ private fun percentOf(state: SpeechModels.State) = when (state) {
 }
 
 private val SAMPLE_COMMANDS = listOf(
-    "Navigate to Mission Viejo", "Play Daft Punk", "What's playing?", "Next song",
+    "Play Daft Punk", "What's playing?", "Next song",
     "Call Mom", "Open Organic Maps", "Pause", "Help",
 )
 
@@ -456,6 +459,43 @@ private fun CommandDrift(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> Tex
                             .padding(horizontal = cq(4.4f), vertical = cq(2f)),
                     )
                 }
+            }
+        }
+    }
+}
+
+private val APP_PICKS = listOf(
+    Triple("Music", "Metrolist", "https://github.com/MetrolistGroup/Metrolist"),
+    Triple("Maps", "Vela", "https://github.com/PimpinPumpkin/Vela"),
+    Triple("Podcasts", "AntennaPod", "https://github.com/AntennaPod/AntennaPod"),
+)
+
+/** One row per pick, each opening the app's GitHub page; they arrive one after another. */
+@Composable
+private fun AppPicks(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit, key: IntroStep) {
+    val context = LocalContext.current
+    Column(Modifier.padding(top = cq(6f)), verticalArrangement = Arrangement.spacedBy(cq(2.6f))) {
+        APP_PICKS.forEachIndexed { i, (kind, name, url) ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .up(entrance(key, 500 + i * 120, 700), cq(7f))
+                    .clip(RoundedCornerShape(cq(5f)))
+                    .background(c.secondaryC)
+                    .clickable {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                        }
+                    }
+                    .padding(horizontal = cq(5f), vertical = cq(3.4f)),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(kind.uppercase(), color = c.onSecondaryC.copy(alpha = 0.7f),
+                        style = TextStyle(fontSize = cqSp(3.2f), fontWeight = FontWeight.Bold, letterSpacing = cqSp(0.3f)))
+                    Text(name, color = c.onSecondaryC, style = TextStyle(fontSize = cqSp(5.2f), fontWeight = FontWeight.ExtraBold))
+                }
+                Text("GitHub ↗", color = c.onSecondaryC, style = TextStyle(fontSize = cqSp(3.8f), fontWeight = FontWeight.SemiBold))
             }
         }
     }
@@ -560,6 +600,27 @@ private fun MicIcon(color: Color) {
                 drawArc(color.copy(alpha = waves[i].value), if (side > 0) -35f else 145f, 70f, false,
                     Offset(24f - r, 16f - r), Size(2 * r, 2 * r), style = stroke)
             }
+        }
+    }
+}
+
+@Composable
+private fun StarIcon(color: Color) {
+    val turn by rememberInfiniteTransition(label = "star").animateFloat(
+        -8f, 8f, infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "star",
+    )
+    Canvas(Modifier.fillMaxSize()) {
+        inIconBox {
+            val star = Path()
+            for (i in 0 until 10) {
+                val r = if (i % 2 == 0) 20f else 8.5f
+                val a = (-90 + i * 36) * PI / 180
+                val x = 24f + (r * cos(a)).toFloat()
+                val y = 25f + (r * sin(a)).toFloat()
+                if (i == 0) star.moveTo(x, y) else star.lineTo(x, y)
+            }
+            star.close()
+            rotate(turn, Offset(24f, 25f)) { drawPath(star, color) }
         }
     }
 }
