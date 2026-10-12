@@ -61,7 +61,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.seb3thehacker.gearslip.audio.CarAudio
 import app.seb3thehacker.gearslip.media.CarMedia
 import app.seb3thehacker.gearslip.media.MediaApp
 import app.seb3thehacker.gearslip.media.MediaArt
@@ -88,7 +87,6 @@ fun MediaScreen(app: MediaApp, onExit: () -> Unit) {
     val queue by media.queue.collectAsStateWithLifecycle()
     val browse by media.browse.collectAsStateWithLifecycle()
     val rejection by media.rejection.collectAsStateWithLifecycle()
-    val capture by CarAudio.capture.collectAsStateWithLifecycle()
     val search by media.search.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(Tab.NOW_PLAYING) }
     var searching by remember { mutableStateOf(false) }
@@ -174,7 +172,6 @@ fun MediaScreen(app: MediaApp, onExit: () -> Unit) {
                 } else {
                     CompactPlayer(now, media, Modifier.weight(1f).fillMaxWidth())
                 }
-                AudioBadge(capture)
             }
             Column(Modifier.weight(1.2f).fillMaxHeight()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -445,20 +442,6 @@ private sealed interface LyricsState {
     data object Loading : LyricsState
     data object Missing : LyricsState
     class Found(val result: LyricsResult) : LyricsState
-}
-
-@Composable
-private fun AudioBadge(capture: CarAudio.Capture) {
-    val micBlocked by CarAudio.micBlocked.collectAsStateWithLifecycle()
-    val text = when (capture) {
-        CarAudio.Capture.ON -> "Audio to car"
-        CarAudio.Capture.ASKING -> "Allow audio capture on the phone"
-        CarAudio.Capture.DENIED ->
-            if (micBlocked) "Audio stays on the phone: turn on Gearslip's microphone permission"
-            else "Audio stays on the phone"
-        CarAudio.Capture.OFF -> return
-    }
-    Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable
