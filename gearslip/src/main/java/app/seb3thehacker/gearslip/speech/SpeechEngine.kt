@@ -64,6 +64,12 @@ object SpeechEngine {
     private const val CUE_TAIL_MS = 250L
 
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "gearslip-speech") }
+    /**
+     * Parakeet large takes seconds to load. On [worker], the first press after connecting
+     * waited behind it before listening at all; here it loads while the driver talks.
+     */
+    private val finalWorker = Executors.newSingleThreadExecutor { Thread(it, "gearslip-speech-final") }
+    private val finalLock = Object()
     private val main = Handler(Looper.getMainLooper())
 
     private var recognizer: OnlineRecognizer? = null
@@ -76,9 +82,10 @@ object SpeechEngine {
     fun warm(context: Context) {
         val app = context.applicationContext
         SpeechModels.init(app)
+        // Kroko first, alone: loading both at once slowed it from a fraction of a second to six.
         worker.execute {
             ensureLoaded(app)
-            ensureFinalLoaded(app)
+            finalWorker.execute { ensureFinalLoaded(app) }
         }
     }
 
@@ -89,9 +96,13 @@ object SpeechEngine {
             recognizer?.release()
             recognizer = null
             loadedModel = null
-            finalRecognizer?.release()
-            finalRecognizer = null
-            loadedFinal = null
+        }
+        finalWorker.execute {
+            synchronized(finalLock) {
+                finalRecognizer?.release()
+                finalRecognizer = null
+                loadedFinal = null
+            }
         }
     }
 
@@ -106,6 +117,7 @@ object SpeechEngine {
         cue: Boolean = true,
         onSpeaking: () -> Unit = {},
         onPartial: (String) -> Unit = {},
+        onListening: () -> Unit = {},
         onHeard: () -> Unit,
         onResult: (String) -> Unit,
         onError: (String) -> Unit,
@@ -125,6 +137,7 @@ object SpeechEngine {
             val text = try {
                 if (cue) cue()
                 if (id != run) return@execute
+                post(onListening)
                 stream(app, r, id, onSpeaking = { post(onSpeaking) }, onPartial = { post { onPartial(it) } }, onStopped = { post(onHeard) })
             } catch (t: Throwable) {
                 GearslipLog.e("speech: listening failed", t)
@@ -201,17 +214,20 @@ object SpeechEngine {
             "speech: $audioMs ms of audio, decoding took $decodeMs ms " +
                 "(${"%.2f".format(decodeMs.toFloat() / max(1L, audioMs))} of real time)",
         )
-        if (last.isEmpty() || id != run) return last
-        val final = ensureFinalLoaded(context) ?: return last
+        if (last.isEmpty() || id != run) { phrase.fill(0f); return last }
         onStopped()
         val started = SystemClock.uptimeMillis()
-        val reread = final.createStream().run {
-            try {
-                acceptWaveform(phrase.copyOf(held), RATE)
-                final.decode(this)
-                clean(final.getResult(this).text)
-            } finally {
-                release()
+        // Held for the whole read, so a model swap in settings can't free it mid-decode.
+        val reread = synchronized(finalLock) {
+            val final = ensureFinalLoaded(context) ?: run { phrase.fill(0f); return last }
+            final.createStream().run {
+                try {
+                    acceptWaveform(phrase.copyOf(held), RATE)
+                    final.decode(this)
+                    clean(final.getResult(this).text)
+                } finally {
+                    release()
+                }
             }
         }
         phrase.fill(0f)
@@ -222,7 +238,7 @@ object SpeechEngine {
     }
 
     /** The model that rereads the phrase, when one is chosen and downloaded; null otherwise. */
-    private fun ensureFinalLoaded(context: Context): OfflineRecognizer? {
+    private fun ensureFinalLoaded(context: Context): OfflineRecognizer? = synchronized(finalLock) {
         val model = SpeechModels.final.value ?: return null
         if (finalRecognizer != null && loadedFinal == model) return finalRecognizer
         finalRecognizer?.release()

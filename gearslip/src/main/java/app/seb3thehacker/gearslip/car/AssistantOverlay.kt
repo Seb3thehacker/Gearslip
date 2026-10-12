@@ -53,14 +53,14 @@ fun AssistantOverlay(modifier: Modifier = Modifier) {
     val state by CarAssistant.state.collectAsState()
     if (state.phase == CarAssistant.Phase.IDLE) return
     val context = LocalContext.current
-    val listening = state.phase == CarAssistant.Phase.LISTENING
+    val listening = state.phase == CarAssistant.Phase.LISTENING && state.ready
     val glow = MaterialTheme.colorScheme.primary
     val glow2 = MaterialTheme.colorScheme.tertiary
     val breathe by rememberInfiniteTransition(label = "glow").animateFloat(
         0.55f, 1f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "glow",
     )
     val strength = when (state.phase) {
-        CarAssistant.Phase.LISTENING -> breathe
+        CarAssistant.Phase.LISTENING -> if (state.ready) breathe else 0.3f
         CarAssistant.Phase.ERROR -> 0.3f
         else -> 0.6f
     }
@@ -87,7 +87,7 @@ fun AssistantOverlay(modifier: Modifier = Modifier) {
             PulsingMic(listening)
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                 val (small, big) = when (state.phase) {
-                    CarAssistant.Phase.LISTENING -> "" to state.heard.ifBlank { "Listening…" }
+                    CarAssistant.Phase.LISTENING -> "" to state.heard.ifBlank { if (state.ready) "Listening…" else "One moment…" }
                     CarAssistant.Phase.THINKING -> "" to state.heard.ifBlank { "…" }
                     else -> state.heard to state.reply
                 }
@@ -96,7 +96,7 @@ fun AssistantOverlay(modifier: Modifier = Modifier) {
                 }
                 Text(
                     big,
-                    color = if (big == "Listening…" || big == "…") Color.White.copy(alpha = 0.7f) else Color.White,
+                    color = if (big == "Listening…" || big == "One moment…" || big == "…") Color.White.copy(alpha = 0.7f) else Color.White,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                     textAlign = TextAlign.Center,

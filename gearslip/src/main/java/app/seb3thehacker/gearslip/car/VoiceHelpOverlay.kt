@@ -76,12 +76,13 @@ fun VoiceHelpOverlay(modifier: Modifier = Modifier) {
                 )
                 GsIconButton(Icons.Filled.Close, "Close", VoiceHelp::hide)
             }
+            // Full width, so a drag anywhere on the card scrolls, not just one on the words.
             Column(
-                Modifier.verticalScroll(rememberScrollState()).padding(top = 8.dp),
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(top = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 VoiceHelp.COMMANDS.forEach { (say, does) ->
-                    Column {
+                    Column(Modifier.fillMaxWidth()) {
                         Text(say, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text(does, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
