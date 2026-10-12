@@ -102,15 +102,10 @@ object CarKeys {
 
     /**
      * The voice key: answers the message on screen if there is one, otherwise starts the
-     * assistant when it's turned on.
+     * assistant.
      */
     private fun voice() = main.post {
-        if (VoiceReply.onVoiceKey()) return@post
-        if (CarSettings.experimentalFeaturesEnabled.value && CarSettings.voiceAssistantEnabled.value) {
-            CarAssistant.start()
-        } else {
-            GearslipLog.i("keys: voice pressed, but the assistant is off in settings")
-        }
+        if (!VoiceReply.onVoiceKey()) CarAssistant.start()
     }
 
     /** Answers a ringing call; with nothing ringing, opens the phone screen. */

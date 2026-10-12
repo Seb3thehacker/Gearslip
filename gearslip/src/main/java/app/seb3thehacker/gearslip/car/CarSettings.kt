@@ -38,10 +38,8 @@ object CarSettings {
     private const val KEY_PINNED = "car_pinned_apps"
     private const val KEY_APP_ORDER = "car_app_order"
     private const val KEY_EXPERIMENTAL_FEATURES = "car_experimental_features"
-    private const val KEY_VOICE_ASSISTANT = "car_voice_assistant"
     private const val KEY_SYSTEM_SPEECH = "car_system_speech"
     private const val KEY_CAR_SENSORS = "car_sensors_enabled"
-    private const val KEY_MEDIA_SEARCH = "car_media_search_enabled"
     private const val KEY_SEEN_SAFETY_WARNING = "car_seen_safety_warning"
     private const val KEY_UNITS = "car_units"
     private const val KEY_WHATS_NEW = "car_whats_new_after_updates"
@@ -73,10 +71,8 @@ object CarSettings {
     private val pinnedFlow = MutableStateFlow<Set<String>>(emptySet())
     private val appOrderFlow = MutableStateFlow<List<String>>(emptyList())
     private val experimentalFeaturesFlow = MutableStateFlow(false)
-    private val voiceAssistantFlow = MutableStateFlow(false)
     private val systemSpeechFlow = MutableStateFlow(false)
     private val carSensorsFlow = MutableStateFlow(false)
-    private val mediaSearchFlow = MutableStateFlow(false)
     private val seenSafetyWarningFlow = MutableStateFlow(false)
     private val unitsFlow = MutableStateFlow(Units.AUTO)
 
@@ -172,13 +168,6 @@ object CarSettings {
      */
     val experimentalFeaturesEnabled: StateFlow<Boolean> = experimentalFeaturesFlow
 
-    /**
-     * The voice assistant is experimental and off by default; a driver has to turn it on
-     * knowingly, from the settings screen, after reading the warning shown there. This flag
-     * alone does not run the assistant - [experimentalFeaturesEnabled] must also be on.
-     */
-    val voiceAssistantEnabled: StateFlow<Boolean> = voiceAssistantFlow
-
     /** Listen with the phone's own speech service instead of Gearslip's on-device model. */
     val systemSpeech: StateFlow<Boolean> = systemSpeechFlow
 
@@ -189,13 +178,6 @@ object CarSettings {
      * for why the raw sensor feed it shows is worth gating - the field labels are unverified.
      */
     val carSensorsEnabled: StateFlow<Boolean> = carSensorsFlow
-
-    /**
-     * Searching inside a media app is experimental and off by default: many apps claim to take
-     * searches and then ignore them or play something else. The media screen's search button
-     * shows only once this and [experimentalFeaturesEnabled] are both on.
-     */
-    val mediaSearchEnabled: StateFlow<Boolean> = mediaSearchFlow
 
     /**
      * Whether the car screen's own "drive safely" warning has already been shown and dismissed
@@ -231,10 +213,8 @@ object CarSettings {
         appOrderFlow.value = AppSettings.getString(app, KEY_APP_ORDER, "")
             .split(",").filter { it.isNotEmpty() }
         experimentalFeaturesFlow.value = AppSettings.getString(app, KEY_EXPERIMENTAL_FEATURES, "false") == "true"
-        voiceAssistantFlow.value = AppSettings.getString(app, KEY_VOICE_ASSISTANT, "false") == "true"
         systemSpeechFlow.value = AppSettings.getString(app, KEY_SYSTEM_SPEECH, "false") == "true"
         carSensorsFlow.value = AppSettings.getString(app, KEY_CAR_SENSORS, "false") == "true"
-        mediaSearchFlow.value = AppSettings.getString(app, KEY_MEDIA_SEARCH, "false") == "true"
         seenSafetyWarningFlow.value = AppSettings.getString(app, KEY_SEEN_SAFETY_WARNING, "false") == "true"
         unitsFlow.value = runCatching {
             Units.valueOf(AppSettings.getString(app, KEY_UNITS, Units.AUTO.name))
@@ -304,19 +284,9 @@ object CarSettings {
         AppSettings.putString(app, KEY_SYSTEM_SPEECH, on.toString())
     }
 
-    fun setVoiceAssistantEnabled(on: Boolean) {
-        voiceAssistantFlow.value = on
-        AppSettings.putString(app, KEY_VOICE_ASSISTANT, on.toString())
-    }
-
     fun setCarSensorsEnabled(on: Boolean) {
         carSensorsFlow.value = on
         AppSettings.putString(app, KEY_CAR_SENSORS, on.toString())
-    }
-
-    fun setMediaSearchEnabled(on: Boolean) {
-        mediaSearchFlow.value = on
-        AppSettings.putString(app, KEY_MEDIA_SEARCH, on.toString())
     }
 
     fun setNightMode(mode: NightMode) {

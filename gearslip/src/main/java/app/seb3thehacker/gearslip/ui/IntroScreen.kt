@@ -68,6 +68,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import app.seb3thehacker.gearslip.BuildConfig
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.foundation.layout.wrapContentHeight
+import app.seb3thehacker.gearslip.speech.SpeechModels
 import app.seb3thehacker.gearslip.stats.UsageStats
 import kotlin.math.PI
 import kotlin.math.cos
@@ -115,7 +123,7 @@ private fun introColors(): IntroColors {
     )
 }
 
-private enum class IntroStep { WELCOME, WIRELESS, KNOBS, GRAPHENE, THANKS, DRIVE }
+private enum class IntroStep { WELCOME, WIRELESS, KNOBS, VOICE, GRAPHENE, THANKS, DRIVE }
 
 private val Pop = CubicBezierEasing(0.3f, 1.6f, 0.5f, 1f)
 private val Rise = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
@@ -156,6 +164,7 @@ fun IntroScreen(onDone: () -> Unit) {
                 "If your car does wireless Android Auto, pair once and leave the cable at home.", step) { WifiIcon(c.onSecondaryC) }
             IntroStep.KNOBS -> BadgeStep(c, ::cq, ::cqSp, c.tertiaryC, "Knobs work.",
                 "Turn, push, done. No touchscreen? Gearslip doesn't need one anymore.", step) { DialIcon(c.onTertiaryC) }
+            IntroStep.VOICE -> VoiceStep(c, ::cq, ::cqSp, step)
             IntroStep.GRAPHENE -> BadgeStep(c, ::cq, ::cqSp, c.secondaryC, "Protections back on.",
                 "On GrapheneOS, Gearslip no longer needs exploit protection compatibility mode. If you " +
                     "turned it on for Gearslip, turn it off to get full protection back.", step,
@@ -234,7 +243,7 @@ private fun Welcome(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit
             )
         }
 
-        Ticker(c.primary, c.onPrimary, "WIRELESS ✦ KNOB SUPPORT ✦ FASTER VIDEO ✦ AUTO UPDATES ✦ ", cq, cqSp, reverse = false, tilt = -4f,
+        Ticker(c.primary, c.onPrimary, "WIRELESS ✦ KNOB SUPPORT ✦ OFFLINE VOICE ✦ FASTER VIDEO ✦ AUTO UPDATES ✦ ", cq, cqSp, reverse = false, tilt = -4f,
             key = key, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = height * 0.15f))
         Confetti(c, key, Modifier.fillMaxSize())
     }
@@ -320,6 +329,7 @@ private fun BadgeStep(
     c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit, badge: Color,
     title: String, body: String, key: Any,
     action: Pair<String, () -> Unit>? = null, outlined: Boolean = false,
+    extra: (@Composable () -> Unit)? = null,
     icon: @Composable () -> Unit,
 ) {
     val spin by rememberInfiniteTransition(label = "spin").animateFloat(
@@ -345,6 +355,7 @@ private fun BadgeStep(
             style = TextStyle(fontSize = cqSp(4.5f), lineHeight = cqSp(6.5f)),
             modifier = Modifier.up(entrance(key, 350, 700), cq(7f)),
         )
+        extra?.invoke()
         if (action != null) {
             val (label, onClick) = action
             Spacer(Modifier.height(if (outlined) cq(7f) else cq(9f)))
@@ -362,6 +373,90 @@ private fun BadgeStep(
                     .clickable(onClick = onClick)
                     .padding(horizontal = if (outlined) cq(7f) else cq(9f), vertical = if (outlined) cq(3.6f) else cq(4.2f)),
             )
+        }
+    }
+}
+
+/**
+ * Voice: a few things to say, drifting past, and a button that fetches both speech models so the
+ * assistant works the first time someone tries it in the car.
+ */
+@Composable
+private fun VoiceStep(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit, key: IntroStep) {
+    val context = LocalContext.current
+    remember { SpeechModels.init(context) }
+    val needed = listOf(SpeechModels.Model.KROKO, SpeechModels.Model.PARAKEET_LARGE)
+    val states = needed.map { SpeechModels.state(it).collectAsState().value }
+    val ready = states.all { it == SpeechModels.State.Ready }
+    val label = when {
+        states.any { it is SpeechModels.State.Downloading } ->
+            "Downloading, ${needed.zip(states).sumOf { (m, st) -> m.downloadMb * percentOf(st) } / needed.sumOf { it.downloadMb }}%"
+        states.any { it is SpeechModels.State.Failed } -> "Download failed. Try again"
+        else -> "Download voice, ${needed.sumOf { it.downloadMb }} MB"
+    }
+    BadgeStep(
+        c, cq, cqSp, c.primaryC, "Just say it.",
+        "Tap the mic, or press the talk button on your wheel, and speak. Your phone turns speech " +
+            "into text by itself, and nothing you say leaves it. Say \"help\" in the car for the full list.",
+        key,
+        action = if (ready) null else label to { needed.forEach { SpeechModels.download(context, it) } },
+        outlined = true,
+        extra = { CommandDrift(c, cq, cqSp, key) },
+    ) { MicIcon(c.onPrimaryC) }
+}
+
+private fun percentOf(state: SpeechModels.State) = when (state) {
+    SpeechModels.State.Ready -> 100
+    is SpeechModels.State.Downloading -> state.percent
+    else -> 0
+}
+
+private val SAMPLE_COMMANDS = listOf(
+    "Navigate to Mission Viejo", "Play Daft Punk", "What's playing?", "Next song",
+    "Call Mom", "Open Organic Maps", "Pause", "Help",
+)
+
+/** Example commands rising slowly through a window that fades at both edges. */
+@Composable
+private fun CommandDrift(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit, key: Any) {
+    val scroll by rememberInfiniteTransition(label = "drift").animateFloat(
+        0f, 1f, infiniteRepeatable(tween(SAMPLE_COMMANDS.size * 2_200, easing = LinearEasing)), label = "drift",
+    )
+    Box(
+        Modifier
+            .padding(top = cq(6f))
+            .fillMaxWidth()
+            .height(cq(34f))
+            .up(entrance(key, 500, 700), cq(7f))
+            .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+            .drawWithContent {
+                drawContent()
+                drawRect(
+                    Brush.verticalGradient(0f to Color.Transparent, 0.25f to Color.Black, 0.75f to Color.Black, 1f to Color.Transparent),
+                    blendMode = BlendMode.DstIn,
+                )
+            }
+            .clipToBounds(),
+    ) {
+        Column(
+            Modifier
+                .wrapContentHeight(Alignment.Top, unbounded = true)
+                // The list is there twice; rising by half loops cleanly.
+                .graphicsLayer { translationY = -size.height / 2f * scroll },
+            verticalArrangement = Arrangement.spacedBy(cq(2.4f)),
+        ) {
+            repeat(2) {
+                SAMPLE_COMMANDS.forEach { say ->
+                    Text(
+                        "\u201c$say\u201d", color = c.onSecondaryC,
+                        style = TextStyle(fontSize = cqSp(4.4f), fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(c.secondaryC)
+                            .padding(horizontal = cq(4.4f), vertical = cq(2f)),
+                    )
+                }
+            }
         }
     }
 }
@@ -437,6 +532,33 @@ private fun DialIcon(color: Color) {
             drawCircle(color, 19f, Offset(24f, 24f), style = Stroke(5f))
             rotate(angle, Offset(24f, 24f)) {
                 drawRoundRect(color, Offset(21.5f, 7f), Size(5f, 13f), androidx.compose.ui.geometry.CornerRadius(2.5f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MicIcon(color: Color) {
+    val t = rememberInfiniteTransition(label = "mic")
+    val waves = (0..1).map { i ->
+        t.animateFloat(
+            0.25f, 1f,
+            infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse,
+                initialStartOffset = androidx.compose.animation.core.StartOffset(i * 250)),
+            label = "mic$i",
+        )
+    }
+    Canvas(Modifier.fillMaxSize()) {
+        inIconBox {
+            drawRoundRect(color, Offset(18f, 5f), Size(12f, 22f), androidx.compose.ui.geometry.CornerRadius(6f))
+            val stroke = Stroke(4f, cap = StrokeCap.Round)
+            drawArc(color, 0f, 180f, false, Offset(12f, 14f), Size(24f, 22f), style = stroke)
+            drawLine(color, Offset(24f, 36f), Offset(24f, 42f), 4f, StrokeCap.Round)
+            // Sound waves either side, pulsing as if someone's talking.
+            listOf(1f to 0, -1f to 0, 1f to 1, -1f to 1).forEach { (side, i) ->
+                val r = if (i == 0) 15f else 21f
+                drawArc(color.copy(alpha = waves[i].value), if (side > 0) -35f else 145f, 70f, false,
+                    Offset(24f - r, 16f - r), Size(2 * r, 2 * r), style = stroke)
             }
         }
     }

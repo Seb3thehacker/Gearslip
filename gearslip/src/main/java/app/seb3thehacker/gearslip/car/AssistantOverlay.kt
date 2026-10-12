@@ -4,7 +4,21 @@ import app.seb3thehacker.gearslip.car.theme.*
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,46 +44,65 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 /**
- * The band that appears while [CarAssistant] is listening, thinking or speaking - a thin strip
- * across the top, same idea as [CallOverlay]'s active-call banner, so it never blocks the screen
- * the driver was already looking at.
+ * What the assistant hears and says, laid over the bottom of whatever screen is up: a dark shade
+ * so white words read over a bright map, and a glow along the bottom edge in the phone's own
+ * colours that breathes while listening. The shade passes touches through; only the buttons take them.
  */
 @Composable
 fun AssistantOverlay(modifier: Modifier = Modifier) {
     val state by CarAssistant.state.collectAsState()
     if (state.phase == CarAssistant.Phase.IDLE) return
     val context = LocalContext.current
+    val listening = state.phase == CarAssistant.Phase.LISTENING
+    val glow = MaterialTheme.colorScheme.primary
+    val glow2 = MaterialTheme.colorScheme.tertiary
+    val breathe by rememberInfiniteTransition(label = "glow").animateFloat(
+        0.55f, 1f, infiniteRepeatable(tween(900, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "glow",
+    )
+    val strength = when (state.phase) {
+        CarAssistant.Phase.LISTENING -> breathe
+        CarAssistant.Phase.ERROR -> 0.3f
+        else -> 0.6f
+    }
 
-    Surface(
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            PulsingMic(state.phase == CarAssistant.Phase.LISTENING)
-            Column(Modifier.weight(1f)) {
-                Text(
-                    when (state.phase) {
-                        CarAssistant.Phase.LISTENING -> "Listening…"
-                        CarAssistant.Phase.THINKING -> "…"
-                        CarAssistant.Phase.SPEAKING -> state.reply
-                        CarAssistant.Phase.ERROR -> state.reply
-                        CarAssistant.Phase.IDLE -> ""
-                    },
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                )
-                if (state.heard.isNotBlank() && state.phase != CarAssistant.Phase.SPEAKING) {
-                    Text(
-                        "\"${state.heard}\"",
-                        style = MaterialTheme.typography.bodySmall,
+    Box(
+        modifier
+            .fillMaxWidth()
+            .drawBehind {
+                drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.45f to Color.Black.copy(alpha = 0.6f), 1f to Color.Black.copy(alpha = 0.85f)))
+                // A wide, flat oval of light rising from the bottom edge.
+                scale(1f, 0.22f, Offset(size.width / 2, size.height)) {
+                    drawCircle(
+                        Brush.radialGradient(
+                            0f to glow.copy(alpha = 0.9f * strength), 0.5f to glow2.copy(alpha = 0.35f * strength), 1f to Color.Transparent,
+                            center = Offset(size.width / 2, size.height), radius = size.width * 0.55f,
+                        ),
+                        radius = size.width * 0.55f, center = Offset(size.width / 2, size.height),
                     )
                 }
+            }
+            .padding(start = 16.dp, end = 16.dp, top = 56.dp, bottom = 20.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            PulsingMic(listening)
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                val (small, big) = when (state.phase) {
+                    CarAssistant.Phase.LISTENING -> "" to state.heard.ifBlank { "Listening…" }
+                    CarAssistant.Phase.THINKING -> "" to state.heard.ifBlank { "…" }
+                    else -> state.heard to state.reply
+                }
+                if (small.isNotBlank()) {
+                    Text(small, color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(
+                    big,
+                    color = if (big == "Listening…" || big == "…") Color.White.copy(alpha = 0.7f) else Color.White,
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             if (state.missingPermission) {
                 GsButton(tone = GsTone.Tonal, onClick = {
