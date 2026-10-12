@@ -4,6 +4,9 @@
 
 An Android Auto alternative built for everyone.
 
+
+[![forthebadge](https://forthebadge.com/badges/compatibility-club-penguin.svg)](https://forthebadge.com)
+
 [<img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="54">](https://apps.obtainium.imranr.dev/redirect?r=obtainium://add/https://github.com/Seb3thehacker/gearslip)
 
 Questions, ideas?
@@ -105,10 +108,18 @@ Turn the notes off, and they stop at once.
 
 ## How Gearslip is made
 
-Gearslip is my beloved child. I decide what it does and how it looks, and AI writes nearly
+Gearslip is my beloved child. I decide what it does and how it looks, and Claude writes nearly
 all of the code. I test every change myself before it ships: in a real car, with both a
 GrapheneOS phone and a stock Android phone, and on [LIVI](https://github.com/f-io/LIVI), the
-open-source head unit software. If something breaks, that's on me, so please open an issue.
+open-source head unit software. I watch the phone's temperature too, so a new feature doesn't
+cook it. Then I beg my friends to try it in their cars, so it works in as many makes, models,
+and years as possible. If something breaks, that's on me, so please open an issue.
+
+## Contributing
+
+Bug reports from real cars help most, and pull requests are welcome.
+[CONTRIBUTING.md](CONTRIBUTING.md) explains what to put in a report, which branch to work
+on, and the one-time agreement you sign before your first pull request merges.
 
 ## Building
 
