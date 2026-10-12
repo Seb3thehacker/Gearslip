@@ -190,6 +190,9 @@ object CarAssistant {
         onSpeaking: () -> Unit = {},
     ) {
         val context = appContext ?: return onError("Speech isn't ready yet.")
+        if (CarSettings.systemSpeech.value && SpeechRecognizer.isRecognitionAvailable(context)) {
+            return systemListen(context, onPartial, onHeard, onResult, onError)
+        }
         SpeechEngine.listen(
             context,
             cue = cue,

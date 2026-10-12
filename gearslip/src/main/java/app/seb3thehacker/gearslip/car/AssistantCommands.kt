@@ -17,9 +17,15 @@ import kotlinx.coroutines.withContext
 object AssistantCommands {
 
     suspend fun handle(context: Context, navigator: CarNavigator, frame: CarEnvironment.Frame, heardRaw: String): String {
-        val heard = heardRaw.lowercase().trim()
+        val heard = heardRaw.lowercase().trim().trimEnd('.', '?', '!')
+        VoiceHelp.hide()
+        if (heard in HELP_WORDS || heard.startsWith("what can i say") || heard.startsWith("what can you do")) {
+            VoiceHelp.show()
+            return "Here's what you can say."
+        }
 
         navigateCommand(context, navigator, frame, heard)?.let { return it }
+        playSearchCommand(heard)?.let { return it }
         mediaCommand(heard)?.let { return it }
         navCommand(navigator, heard)?.let { return it }
         infoCommand(heard)?.let { return it }
@@ -73,6 +79,24 @@ object AssistantCommands {
         CarServices.connectNav(template, frame, destination)
         navigator.home()
         return "Navigating to $destination with ${chosen.label}."
+    }
+
+    /**
+     * "play X" with something after it: a song, artist, album or playlist, asked of the music app
+     * that's open through its own search ([CarMedia.search]). A bare "play", or "play music",
+     * falls through to resume.
+     */
+    private fun playSearchCommand(heard: String): String? {
+        if (!heard.startsWith("play ")) return null
+        val query = heard.removePrefix("play ").trim().removeSuffix(".").trim()
+        if (query.isEmpty() || query in RESUME_WORDS) return null
+        val media = CarServices.media
+        val app = media.appLabel ?: return "Open a music app first, then ask again."
+        if (!media.canSearchLibrary && !media.now.value.canSearch) {
+            return "$app ignores voice searches. Pick something on its screen instead."
+        }
+        media.playBestMatch(query)
+        return "Looking for $query on $app."
     }
 
     private fun mediaCommand(heard: String): String? {
@@ -179,4 +203,8 @@ object AssistantCommands {
     }
 
     private val NAVIGATE_TRIGGERS = listOf("navigate to ", "directions to ", "take me to ", "drive to ")
+
+    private val HELP_WORDS = setOf("help", "commands", "voice commands", "list commands", "show commands")
+
+    private val RESUME_WORDS = setOf("music", "the music", "something", "it", "again", "that")
 }

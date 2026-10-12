@@ -220,6 +220,18 @@ private fun ExperimentalFeaturesList(voiceAssistant: Boolean, carSensors: Boolea
             checked = voiceAssistant,
         ) { CarSettings.setVoiceAssistantEnabled(it) }
 
+        if (voiceAssistant) {
+            val systemSpeech by CarSettings.systemSpeech.collectAsState()
+            ExperimentalFeatureRow(
+                title = "Use the phone's speech recognition",
+                description = "Understands more words, like place and brand names, but listens " +
+                    "through the phone's microphone, not the car's. On most phones this is Google's, " +
+                    "which may send your voice to Google. GrapheneOS has none, so it stays with " +
+                    "Gearslip's own.",
+                checked = systemSpeech,
+            ) { CarSettings.setSystemSpeech(it) }
+        }
+
         ExperimentalFeatureRow(
             title = "Vehicle data",
             description = "Adds a Vehicle data tile: a live, raw dump of the head unit's sensor " +

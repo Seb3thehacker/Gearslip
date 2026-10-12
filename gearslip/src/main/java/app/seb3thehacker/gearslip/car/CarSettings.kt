@@ -39,6 +39,7 @@ object CarSettings {
     private const val KEY_APP_ORDER = "car_app_order"
     private const val KEY_EXPERIMENTAL_FEATURES = "car_experimental_features"
     private const val KEY_VOICE_ASSISTANT = "car_voice_assistant"
+    private const val KEY_SYSTEM_SPEECH = "car_system_speech"
     private const val KEY_CAR_SENSORS = "car_sensors_enabled"
     private const val KEY_MEDIA_SEARCH = "car_media_search_enabled"
     private const val KEY_SEEN_SAFETY_WARNING = "car_seen_safety_warning"
@@ -73,6 +74,7 @@ object CarSettings {
     private val appOrderFlow = MutableStateFlow<List<String>>(emptyList())
     private val experimentalFeaturesFlow = MutableStateFlow(false)
     private val voiceAssistantFlow = MutableStateFlow(false)
+    private val systemSpeechFlow = MutableStateFlow(false)
     private val carSensorsFlow = MutableStateFlow(false)
     private val mediaSearchFlow = MutableStateFlow(false)
     private val seenSafetyWarningFlow = MutableStateFlow(false)
@@ -177,6 +179,9 @@ object CarSettings {
      */
     val voiceAssistantEnabled: StateFlow<Boolean> = voiceAssistantFlow
 
+    /** Listen with the phone's own speech service instead of Gearslip's on-device model. */
+    val systemSpeech: StateFlow<Boolean> = systemSpeechFlow
+
     /**
      * Vehicle data is experimental and off by default: the launcher's tile for it, and the
      * voice assistant's "vehicle data" command, only show up once this and
@@ -227,6 +232,7 @@ object CarSettings {
             .split(",").filter { it.isNotEmpty() }
         experimentalFeaturesFlow.value = AppSettings.getString(app, KEY_EXPERIMENTAL_FEATURES, "false") == "true"
         voiceAssistantFlow.value = AppSettings.getString(app, KEY_VOICE_ASSISTANT, "false") == "true"
+        systemSpeechFlow.value = AppSettings.getString(app, KEY_SYSTEM_SPEECH, "false") == "true"
         carSensorsFlow.value = AppSettings.getString(app, KEY_CAR_SENSORS, "false") == "true"
         mediaSearchFlow.value = AppSettings.getString(app, KEY_MEDIA_SEARCH, "false") == "true"
         seenSafetyWarningFlow.value = AppSettings.getString(app, KEY_SEEN_SAFETY_WARNING, "false") == "true"
@@ -291,6 +297,11 @@ object CarSettings {
     fun setExperimentalFeaturesEnabled(on: Boolean) {
         experimentalFeaturesFlow.value = on
         AppSettings.putString(app, KEY_EXPERIMENTAL_FEATURES, on.toString())
+    }
+
+    fun setSystemSpeech(on: Boolean) {
+        systemSpeechFlow.value = on
+        AppSettings.putString(app, KEY_SYSTEM_SPEECH, on.toString())
     }
 
     fun setVoiceAssistantEnabled(on: Boolean) {

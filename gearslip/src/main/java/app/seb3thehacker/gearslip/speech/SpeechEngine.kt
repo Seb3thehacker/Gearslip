@@ -33,8 +33,11 @@ import kotlin.math.sqrt
  */
 object SpeechEngine {
 
-    /** FUTO's ACFT Whisper tiny (Apache-2.0), re-quantized to 5 bits, inside the APK. */
-    private const val MODEL = "speech/tiny_acft_q5_1.bin"
+    /**
+     * FUTO's ACFT Whisper (Apache-2.0), re-quantized to 5 bits, inside the APK: base when the build
+     * carries it (more accurate, about twice as slow), tiny otherwise.
+     */
+    private val MODELS = listOf("speech/base_acft_q5_1.bin", "speech/tiny_acft_q5_1.bin")
 
     /** The error for an engine that can't run at all, which callers may answer with a fallback. */
     const val NOT_LOADED = "The speech model didn't load."
@@ -258,12 +261,14 @@ object SpeechEngine {
             libraryLoaded = true
         }
         val started = SystemClock.uptimeMillis()
-        handle = nativeInitAsset(context.assets, MODEL)
+        val model = MODELS.firstOrNull { name -> runCatching { context.assets.open(name).close() }.isSuccess }
+            ?: run { GearslipLog.w("speech: no model in the build"); return false }
+        handle = nativeInitAsset(context.assets, model)
         if (handle == 0L) {
             GearslipLog.w("speech: couldn't load the model")
             return false
         }
-        GearslipLog.i("speech: loaded the model in ${SystemClock.uptimeMillis() - started} ms")
+        GearslipLog.i("speech: loaded $model in ${SystemClock.uptimeMillis() - started} ms")
         return true
     }
 

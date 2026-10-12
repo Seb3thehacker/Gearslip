@@ -256,6 +256,7 @@ fun CarUi() {
                             modifier = Modifier.align(Alignment.TopEnd),
                         )
                         // Above the popup: a call is more urgent than any notification.
+                        VoiceHelpOverlay(Modifier.align(Alignment.Center))
                         CallOverlay(Modifier.align(Alignment.TopCenter))
                         AssistantOverlay(Modifier.align(Alignment.TopCenter))
                         if (app.seb3thehacker.gearslip.BuildConfig.DEBUG) {
