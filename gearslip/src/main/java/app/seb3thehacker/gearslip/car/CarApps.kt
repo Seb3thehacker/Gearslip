@@ -22,7 +22,7 @@ class CarApp(
 object CarApps {
 
     val all: List<CarApp> = listOf(
-        CarApp("web", "Web", Icons.Filled.Search) {
+        CarApp("web", "Browser", Icons.Filled.Search) {
             WebApp(content = ProjectedContent.resolve(LocalContext.current))
         },
         CarApp("phone", "Screen sharing", Icons.Filled.Share) {

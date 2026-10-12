@@ -59,7 +59,7 @@ fun WebApp(content: String) {
 
     Column(Modifier.fillMaxSize()) {
         // Back steps through the page's history first (the interceptor above), then leaves.
-        ScreenHeader("Web", Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        ScreenHeader("Browser", Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxSize(),
             factory = { context ->

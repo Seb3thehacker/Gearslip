@@ -262,7 +262,7 @@ private fun ExperimentalFeatureRow(
     }
 }
 
-/** The URL (or raw HTML) the Web app shows. Edited with [CarKeyboard] - no phone in hand needed. */
+/** The URL (or raw HTML) the Browser app shows. Edited with [CarKeyboard] - no phone in hand needed. */
 @Composable
 private fun WebPageSetting() {
     val context = LocalContext.current
@@ -287,7 +287,7 @@ private fun WebPageSetting() {
             )
         }
         Text(
-            "Shown by the Web app on the launcher. Applies on the next connection.",
+            "Shown by the Browser app on the launcher. Applies on the next connection.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
