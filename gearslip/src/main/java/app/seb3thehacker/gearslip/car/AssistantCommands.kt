@@ -26,6 +26,7 @@ object AssistantCommands {
             VoiceHelp.show()
             return "Here's what you can say."
         }
+        if (heard.matches(Regex("(fuck|f\\*+) (you|off)( too)?"))) return "Fuck you too."
 
         navigateCommand(context, navigator, frame, heard)?.let { return it }
         playSearchCommand(context, navigator, heard)?.let { return it }
