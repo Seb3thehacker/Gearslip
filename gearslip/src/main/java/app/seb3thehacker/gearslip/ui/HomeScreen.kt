@@ -113,8 +113,6 @@ fun HomeScreen(
                         Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth().height(56.dp)) {
                             Text("Disconnect")
                         }
-                    } else {
-                        WirelessButton()
                     }
                 }
             }
@@ -135,11 +133,11 @@ private fun StatusCard(status: SessionStatus.Snapshot) {
             scheme.surfaceContainerHigh to scheme.onSurface
     }
 
+    val live = status.phase == SessionStatus.Phase.CONNECTING || status.phase == SessionStatus.Phase.PROJECTING
     Surface(color = container, contentColor = content, shape = MaterialTheme.shapes.extraLarge) {
+      Column(Modifier.fillMaxWidth().padding(24.dp)) {
         Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
+            Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
@@ -155,11 +153,17 @@ private fun StatusCard(status: SessionStatus.Snapshot) {
                 ) {}
             }
             Column {
-                Text(status.headline, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(status.headline, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(4.dp))
                 Text(status.detail, style = MaterialTheme.typography.bodyMedium)
             }
         }
+        // The other way in: wireless, right under the cable's instructions.
+        if (!live) {
+            Spacer(Modifier.height(20.dp))
+            WirelessButton()
+        }
+      }
     }
 }
 

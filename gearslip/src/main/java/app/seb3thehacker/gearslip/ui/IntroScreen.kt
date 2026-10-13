@@ -619,7 +619,7 @@ private inline fun DrawScope.inIconBox(block: DrawScope.() -> Unit) {
 }
 
 @Composable
-private fun WifiIcon(color: Color) {
+internal fun WifiIcon(color: Color) {
     val t = rememberInfiniteTransition(label = "wifi")
     val waves = (0..2).map { i ->
         t.animateFloat(
