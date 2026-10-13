@@ -1,6 +1,7 @@
 package app.seb3thehacker.gearslip.car
 
 import android.content.Context
+import app.seb3thehacker.gearslip.media.CarMedia
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
@@ -169,7 +170,19 @@ object AssistantCommands {
             break
         }
 
-        val app = media.appLabel ?: return "Open a music app first, then ask again."
+        // No music app open, or its connection is gone (the app was closed): use the one played
+        // last, the way "play X" works on Android Auto.
+        val phase = media.phase.value
+        if (media.appLabel == null || phase == CarMedia.Phase.IDLE || phase == CarMedia.Phase.REJECTED) {
+            if (!CarServices.reopenLastMedia()) return "Open a music app first, then ask again."
+            navigator.media()
+        }
+        withTimeoutOrNull(APP_CONNECT_MS) {
+            while (media.phase.value != CarMedia.Phase.READY || media.appLabel == null ||
+                (!media.canSearchLibrary && !media.now.value.canSearch)
+            ) delay(200)
+        }
+        val app = media.appLabel ?: return "Your music app didn't open in time. Try again."
         if (!media.canSearchLibrary && !media.now.value.canSearch) {
             return "$app ignores voice searches. Pick something on its screen instead."
         }
