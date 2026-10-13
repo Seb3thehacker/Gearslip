@@ -100,7 +100,8 @@ turn them on, in setup or in Settings.
   those boxes cover: the Android version and whether the phone runs GrapheneOS, the phone
   model, whether a car connected that day, and each car's head unit, model, year, screen
   size, and connection result, with whether that drive used the cable or wireless and
-  whether music went over USB or Bluetooth. Settings shows the exact note. Untick a phone detail, and
+  whether music went over USB or Bluetooth. If you tick it, how each drive went: how far
+  the connection got, how long it lasted, and how it ended. Settings shows the exact note. Untick a phone detail, and
   the server drops the copy it kept.
 - **What they leave out.** Your name, accounts, location, contacts, messages, and
   anything you type or play.

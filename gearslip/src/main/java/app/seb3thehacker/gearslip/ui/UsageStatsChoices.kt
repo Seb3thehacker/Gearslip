@@ -79,7 +79,7 @@ internal val USAGE_STATS_INTRO: AnnotatedString = buildAnnotatedString {
  * sentences. The full text is one tap away in [UsageStatsReadMore].
  */
 internal val USAGE_STATS_SHORT: AnnotatedString = buildAnnotatedString {
-    append("Gearslip can send a short note after each drive: its version and the car details you pick below. ")
+    append("Gearslip can send a short note after each drive: its version and the details you pick below. ")
     append("The notes show which cars work and where the others fail. ")
     withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("No name, account, or location goes with them.") }
 }
@@ -137,11 +137,11 @@ internal fun ColumnScope.UsageStatsRows() {
             )
             Choice("Android version and system, such as GrapheneOS or stock Samsung", choices.android) { choices = choices.copy(android = it); save() }
             Choice("Phone model", choices.phone) { choices = choices.copy(phone = it); save() }
-            Choice("Each car's head unit, model, year, and screen size, and whether it connected", choices.cars) {
+            Choice("Each car's head unit, model, year, and screen size, whether it connected, and how: cable or wireless, USB or Bluetooth audio", choices.cars) {
                 choices = choices.copy(cars = it)
                 save()
             }
-            Choice("How each drive went: how far the connection got, how long it lasted, and how it ended, crashes included", choices.failures) {
+            Choice("How each drive went, with the car's name: how far the connection got, how long it lasted, and how it ended, crashes included", choices.failures) {
                 choices = choices.copy(failures = it)
                 save()
             }
