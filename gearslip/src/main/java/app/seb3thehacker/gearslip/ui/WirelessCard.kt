@@ -31,10 +31,12 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.seb3thehacker.gearslip.wireless.WirelessLink
 
-/** What the wireless start-up needs: Bluetooth to reach the car, nearby Wi-Fi to join its network. */
+/** What the wireless start-up needs: Bluetooth to reach the car, nearby Wi-Fi to join its network, local network to talk to it. */
 private val WIRELESS_PERMISSIONS = buildList {
     add(Manifest.permission.BLUETOOTH_CONNECT)
     if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.NEARBY_WIFI_DEVICES)
+    // Android 17 silently drops traffic to local addresses, the car included, without it.
+    if (Build.VERSION.SDK_INT >= 37) add("android.permission.ACCESS_LOCAL_NETWORK")
     add(Manifest.permission.ACCESS_FINE_LOCATION)
 }.toTypedArray()
 
