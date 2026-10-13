@@ -4,6 +4,7 @@ import android.os.Build
 import app.seb3thehacker.gearslip.audio.AudioLink
 import app.seb3thehacker.gearslip.audio.CarMic
 import app.seb3thehacker.gearslip.media.CarMediaStatus
+import app.seb3thehacker.gearslip.car.CarBluetooth
 import app.seb3thehacker.gearslip.car.ClusterNav
 import app.seb3thehacker.gearslip.car.DirectionsVoice
 import app.seb3thehacker.gearslip.car.CarAssistant
@@ -162,6 +163,7 @@ class GearslipRunner(
         guidanceLink = null
         CarSensors.clear()
         CarMic.current = null
+        CarBluetooth.onCarDisconnected()
         mediaStatus?.stop()
         mediaStatus = null
         clusterNav?.stop()
@@ -209,6 +211,8 @@ class GearslipRunner(
                 mediaStatus?.onMessage(messageId, body)
             } else if (frame.channel == guidanceLink?.channelId) {
                 guidanceLink?.onMessage(messageId, body)
+            } else if (frame.channel == CarBluetooth.channelId) {
+                CarBluetooth.onMessage(messageId, body)
             } else if (frame.channel == CarMic.current?.channelId) {
                 CarMic.current?.onMessage(messageId, body)
             } else if (frame.channel == audioLink?.channelId) {
@@ -465,6 +469,7 @@ class GearslipRunner(
         startMicChannel(serviceDiscoveryResponse)
         startMediaStatusChannel(serviceDiscoveryResponse)
         startClusterNavChannel(serviceDiscoveryResponse)
+        startBluetooth(serviceDiscoveryResponse)
 
         val input = ServiceDiscovery.findInputService(serviceDiscoveryResponse, video.displayId)
         if (input == null) {
@@ -563,6 +568,19 @@ class GearslipRunner(
         log.i("media status channel: $channel")
         mediaStatus = CarMediaStatus(channel) { id, body -> send(id, body, encrypted = true, channel = channel) }
         openChannel(channel)
+    }
+
+    /** Bluetooth pairing, for calls: the channel only opens if the driver asks to pair. */
+    private fun startBluetooth(serviceDiscoveryResponse: ByteArray) {
+        val bluetooth = ServiceDiscovery.findBluetoothService(serviceDiscoveryResponse) ?: run {
+            log.i("no Bluetooth service - the car can't be paired from here")
+            return
+        }
+        CarBluetooth.onCarConnected(
+            bluetooth,
+            open = { openChannel(bluetooth.serviceId) },
+            send = { id, body -> send(id, body, encrypted = true, channel = bluetooth.serviceId) },
+        )
     }
 
     /** Turn-by-turn for the instrument cluster: the next turn, its road, and how far. */

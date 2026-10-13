@@ -249,6 +249,7 @@ fun CarUi() {
                         }
                         CarToastOverlay(Modifier.align(Alignment.BottomCenter))
                         CallPromptOverlay()
+                        BluetoothPairOverlay()
                         PopupTimer()
                         // The dashboard is already listing them, so it needs no popup.
                         NotificationPopup(

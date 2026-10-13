@@ -153,6 +153,28 @@ object ServiceDiscovery {
         return null
     }
 
+    /**
+     * The car's Bluetooth, from BluetoothService (Service field 6):
+     *   BluetoothService { string car_address = 1; repeated BluetoothPairingMethod methods = 2 [packed]; }
+     * Null when the car offers no pairing over the link.
+     */
+    class BluetoothService(val serviceId: Int, val carAddress: String, val pairingMethods: List<Int>)
+
+    fun findBluetoothService(response: ByteArray): BluetoothService? {
+        for (channel in Wire.allBytes(Wire.fields(response), 1)) {
+            val service = Wire.fields(channel)
+            val id = Wire.varint(service, 1)?.toInt() ?: continue
+            val fields = Wire.fields(Wire.bytes(service, 6) ?: continue)
+            val address = Wire.bytes(fields, 1)?.let { String(it, Charsets.UTF_8) } ?: continue
+            // Packed as declared, though a car may send each method as its own varint.
+            val methods = fields.filter { it.number == 2 }.flatMap { f ->
+                f.bytes?.let(::packedVarints) ?: listOf(f.varint.toInt())
+            }
+            return BluetoothService(id, address, methods)
+        }
+        return null
+    }
+
     const val STREAM_GUIDANCE = 1
     const val STREAM_MEDIA = 3
     const val CODEC_PCM = 1

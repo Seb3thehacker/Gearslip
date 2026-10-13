@@ -66,6 +66,7 @@ object CarServices {
         app.seb3thehacker.gearslip.call.CarCalls.start(appContext)
         CarAssistant.init(appContext)
         DirectionsVoice.init(appContext)
+        CarBluetooth.init(appContext)
         CarKeys.init(appContext)
         VoiceReply.init(appContext)
         // Loaded now, while nothing's waiting on it, so the first reply isn't slower than the rest.

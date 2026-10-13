@@ -73,6 +73,14 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.seb3thehacker.gearslip.AppSettings
+import app.seb3thehacker.gearslip.car.CarSettings
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.RadioButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.sp
 import app.seb3thehacker.gearslip.call.CarCalls
 import app.seb3thehacker.gearslip.car.Prefetch
 import app.seb3thehacker.gearslip.host.AndroidAuto
@@ -100,6 +108,8 @@ private class GuidePage(
     val onAction: (() -> Unit)? = null,
     /** Drawn under [explanation]. */
     val content: (@Composable () -> Unit)? = null,
+    /** Only shown when the driver picked USB audio on the car audio page. */
+    val usbOnly: Boolean = false,
 )
 
 /** A plain Material icon, sized to fill the badge's icon box. */
@@ -213,6 +223,17 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
             ),
         )
     }
+    if (!granted(context, arrayOf(Manifest.permission.BLUETOOTH_CONNECT))) {
+        add(
+            GuidePage(
+                title = "Bluetooth.",
+                explanation = "The first time you plug in, Gearslip offers to pair your phone with the " +
+                    "car, so calls play through its speakers.",
+                icon = glyph(Icons.Filled.Call),
+                permissions = arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
+            ),
+        )
+    }
 
     if (!granted(context, arrayOf(Manifest.permission.POST_NOTIFICATIONS))) {
         add(
@@ -270,6 +291,16 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
         ),
     )
 
+    // --- Car audio: always asked, and it decides whether the adb pages below show ---------
+    add(
+        GuidePage(
+            title = "Car audio.",
+            explanation = "Pick how music reaches the car. Calls go over Bluetooth either way.",
+            icon = glyph(Icons.Filled.PlayArrow),
+            content = { AudioChoice() },
+        ),
+    )
+
     // --- Optional: each is skipped once its actual effect is already in place --------
     if (!hasProjectMediaOp(context)) {
         add(
@@ -279,6 +310,7 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
                     "Gearslip with your audio for good. Without it, you tap Start once each drive.",
                 icon = glyph(Icons.Filled.Build),
                 optional = true,
+                usbOnly = true,
                 command = "adb shell appops set ${BuildConfig.APPLICATION_ID} PROJECT_MEDIA allow",
             ),
         )
@@ -292,6 +324,7 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
                     "drive and hide them again after.",
                 icon = glyph(Icons.Filled.Build),
                 optional = true,
+                usbOnly = true,
                 command = "adb shell pm grant ${BuildConfig.APPLICATION_ID} android.permission.WRITE_SECURE_SETTINGS",
             ),
         )
@@ -328,6 +361,55 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
 }
 
 /**
+ * Bluetooth or USB for the car's music, as two cards. Bluetooth comes first and is picked for a
+ * driver who hasn't chosen yet: it never asks for consent, and the map app's voice reaches the car.
+ */
+@Composable
+private fun AudioChoice() {
+    val usb by CarSettings.pipeAudio.collectAsState()
+    LaunchedEffect(Unit) { if (!CarSettings.pipeAudioChosen) CarSettings.setPipeAudio(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        AudioCard(
+            "Bluetooth", "Recommended",
+            "No prompt each drive, and your map app's voice reaches the car.",
+            selected = !usb,
+        ) { CarSettings.setPipeAudio(false) }
+        AudioCard(
+            "USB", null,
+            "Clearer sound with no delay. Android asks to share audio once each drive.",
+            selected = usb,
+        ) { CarSettings.setPipeAudio(true) }
+    }
+}
+
+@Composable
+private fun AudioCard(title: String, tag: String?, body: String, selected: Boolean, onClick: () -> Unit) {
+    val c = introColors()
+    val shape = RoundedCornerShape(24.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (selected) c.primaryC else Color.Transparent)
+            .border(BorderStroke(2.dp, if (selected) c.primary else c.outline), shape)
+            .selectable(selected, role = Role.RadioButton, onClick = onClick)
+            .padding(16.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Column(Modifier.padding(start = 12.dp)) {
+            Text(title, color = if (selected) c.onPrimaryC else c.onSurface, style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold))
+            tag?.let { Text(it, color = c.primary, style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)) }
+            Text(
+                body, color = if (selected) c.onPrimaryC else c.onVariant,
+                style = TextStyle(fontSize = 15.sp, lineHeight = 21.sp),
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+/**
  * The first-run guide, one page at a time: permissions, then removing Android Auto if it is still installed, then the optional extras. Nothing
  * here can be verified as done except a permission grant, so every other page is a "Next" a
  * driver takes on trust, with "Skip" sitting right next to it.
@@ -335,7 +417,11 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
 @Composable
 fun SetupGuideScreen(onRequestCallScreening: () -> Unit, onDone: () -> Unit, onlyUsageNotes: Boolean = false) {
     val context = LocalContext.current
-    val pages = remember { if (onlyUsageNotes) listOf(usageNotesPage(context)) else pages(context, onRequestCallScreening) }
+    val allPages = remember { if (onlyUsageNotes) listOf(usageNotesPage(context)) else pages(context, onRequestCallScreening) }
+    // The USB-only pages all come after the car audio page, so dropping them never moves the
+    // page the driver is on.
+    val usbAudio by CarSettings.pipeAudio.collectAsState()
+    val pages = remember(usbAudio) { allPages.filter { usbAudio || !it.usbOnly } }
     var index by remember { mutableIntStateOf(0) }
 
     // Only ours to handle once there is a previous page to return to; at the first page, the

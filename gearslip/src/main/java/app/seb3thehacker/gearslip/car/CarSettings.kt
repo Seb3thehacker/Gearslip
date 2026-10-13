@@ -162,6 +162,10 @@ private const val KEY_SPEAK_DIRECTIONS = "car_speak_directions"
      * Whether the driver has already been offered Bluetooth after turning down the capture
      * dialog. Offered once only: someone who chose to keep the USB route shouldn't be nagged.
      */
+    /** False until the driver picks USB or Bluetooth, in setup or in settings. */
+    val pipeAudioChosen: Boolean
+        get() = AppSettings.getString(app, KEY_PIPE_AUDIO, "") != ""
+
     val audioChoiceAsked: Boolean
         get() = AppSettings.getString(app, KEY_AUDIO_CHOICE_ASKED, "false") == "true"
 
@@ -210,7 +214,9 @@ private const val KEY_SPEAK_DIRECTIONS = "car_speak_directions"
         autoplayFlow.value = AppSettings.getString(app, KEY_AUTOPLAY, "false") == "true"
         playerTitleFlow.value = AppSettings.getString(app, KEY_PLAYER_TITLE, "false") == "true"
         pipeAudioFlow.value = AppSettings.getString(app, KEY_PIPE_AUDIO, "true") == "true"
-        speakDirectionsFlow.value = AppSettings.getString(app, KEY_SPEAK_DIRECTIONS, "true") == "true"
+        // Until the driver sets it, on for USB audio and off for Bluetooth, where the map app's
+        // own voice already reaches the car.
+        speakDirectionsFlow.value = AppSettings.getString(app, KEY_SPEAK_DIRECTIONS, pipeAudioFlow.value.toString()) == "true"
         nightFlow.value = runCatching {
             NightMode.valueOf(AppSettings.getString(app, KEY_NIGHT, NightMode.AUTO.name))
         }.getOrDefault(NightMode.AUTO)
@@ -274,9 +280,11 @@ private const val KEY_SPEAK_DIRECTIONS = "car_speak_directions"
      * back asks for it again (or waits for the car, if none is connected).
      */
     fun setPipeAudio(on: Boolean) {
+        // Saved even when unchanged, so picking the default still counts as a choice.
+        AppSettings.putString(app, KEY_PIPE_AUDIO, on.toString())
         if (pipeAudioFlow.value == on) return
         pipeAudioFlow.value = on
-        AppSettings.putString(app, KEY_PIPE_AUDIO, on.toString())
+        if (AppSettings.getString(app, KEY_SPEAK_DIRECTIONS, "") == "") speakDirectionsFlow.value = on
         if (on) CarAudio.request() else CarAudio.release()
     }
 
