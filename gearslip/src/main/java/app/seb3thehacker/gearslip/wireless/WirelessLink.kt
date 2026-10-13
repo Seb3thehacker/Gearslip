@@ -82,6 +82,8 @@ object WirelessLink {
     @Volatile private var tcp: Socket? = null
     @Volatile private var network: ConnectivityManager.NetworkCallback? = null
     @Volatile private var worker: Thread? = null
+    /** Set when Android drops the car's network mid-try, so the rest don't bind to a dead one. */
+    @Volatile private var lostNetwork: Network? = null
     private val writeLock = Any()
 
     /** Paired Bluetooth devices, cars or not: the driver picks theirs. Needs BLUETOOTH_CONNECT. */
@@ -315,7 +317,11 @@ object WirelessLink {
             }
 
             override fun onLost(net: Network) {
-                log.w("Wi-Fi: lost \"$ssid\"")
+                lostNetwork = net
+                log.w(
+                    "Wi-Fi: lost \"$ssid\" - Android dropped the car's network. Picking it by hand " +
+                        "in the Wi-Fi list does this; the remaining tries go over the phone's own Wi-Fi",
+                )
             }
         }
         network?.let { runCatching { manager.unregisterNetworkCallback(it) } }
@@ -363,10 +369,13 @@ object WirelessLink {
 
     private fun connectTcp(context: Context, output: OutputStream, name: String, net: Network, ip: String, port: Int) {
         SessionStatus.connecting("Wi-Fi: reaching $name")
+        lostNetwork = null
         var last: Exception? = null
         repeat(TCP_TRIES) { attempt ->
             try {
-                val socket = net.socketFactory.createSocket()
+                // A network Android has dropped refuses every bind (EPERM). If the driver joined the
+                // car's Wi-Fi by hand, the phone's ordinary route reaches it, so use that instead.
+                val socket = if (lostNetwork == net) Socket() else net.socketFactory.createSocket()
                 socket.tcpNoDelay = true
                 socket.connect(InetSocketAddress(ip, port), 5_000)
                 tcp = socket
