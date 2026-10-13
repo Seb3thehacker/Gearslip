@@ -62,9 +62,12 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
     var introReturn by rememberSaveable { mutableStateOf(afterIntro) }
     // Home's "it worked" card opens Settings at usage notes rather than at the top.
     var settingsAtUsageNotes by rememberSaveable { mutableStateOf(false) }
+    // What's new and Connection help open from Home and from Settings; back returns to whichever.
+    var backTo by rememberSaveable { mutableStateOf(Screen.SETTINGS) }
     BackHandler(enabled = screen != Screen.HOME && screen != Screen.INTRO) {
         screen = when (screen) {
-            Screen.RECOMMENDED_APPS, Screen.LOGS, Screen.CAR_PREVIEW, Screen.HELP -> Screen.SETTINGS
+            Screen.RECOMMENDED_APPS, Screen.LOGS, Screen.CAR_PREVIEW -> Screen.SETTINGS
+            Screen.HELP, Screen.WHATS_NEW -> backTo
             else -> Screen.HOME
         }
     }
@@ -105,16 +108,18 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
                 Screen.INTRO -> IntroScreen(onDone = { screen = introReturn })
                 Screen.HOME -> HomeScreen(
                     onOpenSettings = { settingsAtUsageNotes = false; screen = Screen.SETTINGS },
+                    onOpenWhatsNew = { backTo = Screen.HOME; screen = Screen.WHATS_NEW },
+                    onOpenHelp = { backTo = Screen.HOME; screen = Screen.HELP },
                     onOpenUsageNotes = { settingsAtUsageNotes = true; screen = Screen.SETTINGS },
                     onDisconnect = onDisconnect,
                 )
-                Screen.WHATS_NEW -> WhatsNewScreen(onBack = { screen = Screen.SETTINGS })
+                Screen.WHATS_NEW -> WhatsNewScreen(onBack = { screen = backTo })
                 Screen.LOGS -> LogsScreen(onBack = { screen = Screen.SETTINGS })
                 Screen.SETTINGS -> SettingsScreen(
                     onBack = { screen = Screen.HOME },
                     onOpenRecommendedApps = { settingsAtUsageNotes = false; screen = Screen.RECOMMENDED_APPS },
-                    onOpenWhatsNew = { settingsAtUsageNotes = false; screen = Screen.WHATS_NEW },
-                    onOpenHelp = { settingsAtUsageNotes = false; screen = Screen.HELP },
+                    onOpenWhatsNew = { settingsAtUsageNotes = false; backTo = Screen.SETTINGS; screen = Screen.WHATS_NEW },
+                    onOpenHelp = { settingsAtUsageNotes = false; backTo = Screen.SETTINGS; screen = Screen.HELP },
                     onOpenCarPreview = { settingsAtUsageNotes = false; screen = Screen.CAR_PREVIEW },
                     onOpenLogs = { settingsAtUsageNotes = false; screen = Screen.LOGS },
                     onReplayTutorial = { screen = Screen.SETUP_GUIDE },
@@ -124,7 +129,7 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
                 Screen.RECOMMENDED_APPS -> RecommendedAppsScreen(onBack = { screen = Screen.SETTINGS })
                 Screen.CAR_PREVIEW -> CarPreviewScreen(onBack = { screen = Screen.SETTINGS })
                 Screen.HELP -> HelpScreen(
-                    onBack = { screen = Screen.SETTINGS },
+                    onBack = { screen = backTo },
                     onRequestCallScreening = onRequestCallScreening,
                 )
                 Screen.CERT_SETUP -> CertSetupScreen(

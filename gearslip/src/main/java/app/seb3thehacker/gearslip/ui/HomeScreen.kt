@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -48,6 +49,8 @@ import app.seb3thehacker.gearslip.stats.WorkedPrompt
 @Composable
 fun HomeScreen(
     onOpenSettings: () -> Unit,
+    onOpenWhatsNew: () -> Unit,
+    onOpenHelp: () -> Unit,
     onOpenUsageNotes: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -98,7 +101,22 @@ fun HomeScreen(
                     Spacer(Modifier.height(16.dp))
                     StatusCard(status)
                     Spacer(Modifier.height(16.dp))
-                    UsageNotesHomeCard(onOpen = onOpenUsageNotes)
+                    SettingsCard {
+                        SettingsRow(
+                            "What's new in ${Intro.release}",
+                            Modifier.clickable(onClick = onOpenWhatsNew),
+                            icon = Icons.Filled.Star,
+                            trailing = { Arrow() },
+                        )
+                        SettingsDivider()
+                        SettingsRow(
+                            "Which cars work",
+                            Modifier.clickable(onClick = onOpenHelp),
+                            subtitle = "Most do. See which ones, and what to set up first",
+                            icon = Icons.Filled.Info,
+                            trailing = { Arrow() },
+                        )
+                    }
                     // The first drive that worked asks once to share it, right under the result.
                     val car = workedCar
                     if (car != null && !live) {
@@ -123,6 +141,13 @@ fun HomeScreen(
         if (celebrate) ConfettiFall(onDone = WorkedPrompt::celebrated)
     }
 }
+
+@Composable
+private fun Arrow() = Icon(
+    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+    contentDescription = null,
+    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+)
 
 @Composable
 private fun StatusCard(status: SessionStatus.Snapshot) {
