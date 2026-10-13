@@ -863,13 +863,17 @@ class GearslipRunner(
     /**
      * The offered config that best fills the car's screen: the smallest whose visible width
      * reaches most of the touchscreen's, else the largest there is. Always taking the smallest
-     * put 800x480 on a 1540x720 Audi screen and stretched it. With no touchscreen size to go
-     * by, the smallest is still the safe choice.
+     * put 800x480 on a 1540x720 Audi screen and stretched it. A car that gives no touchscreen
+     * size gets the largest up to 1080p: a car only offers sizes it can show, and the 2024 VW
+     * (touchscreen 0x0) blurred 800x480 across a 1080p screen.
      */
     private fun fitToScreen(offered: List<Int>): Int? {
         val known = offered.filter { videoConfigs.getOrNull(it)?.pixelSize() != null }
         fun pixels(idx: Int) = videoConfigs[idx].pixelCount()
-        if (touchWidth <= 0) return known.minByOrNull(::pixels)
+        if (touchWidth <= 0) {
+            return known.filter { pixels(it) <= 1920 * 1080 }.maxByOrNull(::pixels)
+                ?: known.minByOrNull(::pixels)
+        }
         val wide = known.filter { (videoConfigs[it].visibleSize()?.first ?: 0) >= touchWidth * 8 / 10 }
         return wide.minByOrNull(::pixels) ?: known.maxByOrNull(::pixels)
     }
