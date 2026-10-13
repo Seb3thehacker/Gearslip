@@ -15,8 +15,10 @@ import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 /**
  * The speech models Gearslip listens with, in two roles: a streaming one that writes the words
  * while the driver talks, and an optional final one that reads the whole phrase again once they
- * stop, for a more accurate result. None ships in the APK: each is fetched once from sherpa-onnx's
- * GitHub releases, where its authors publish it, and kept in the app's own storage.
+ * stop, for a more accurate result. None ships in the APK: each is fetched once and kept in the
+ * app's own storage. sherpa-onnx's author publishes them twice: as .tar.bz2 archives on GitHub and
+ * as plain files on Hugging Face. The plain files come first where they exist. Unpacking bzip2 on
+ * the phone pinned a core and held a download to 150 KB/s on Wi-Fi that does 19 MB/s.
  */
 object SpeechModels {
 
@@ -34,9 +36,11 @@ object SpeechModels {
         /** Empty for Canary, which decodes with attention and has no joiner. */
         val joiner: String,
         val modelType: String = "",
+        /** Whether Hugging Face has the files unpacked under the archive's name. */
+        val plainFiles: Boolean = true,
     ) {
         KROKO(
-            Role.LIVE, "kroko-en", "Kroko", "Banafo's Kroko ASR, CC BY-SA 4.0", 54,
+            Role.LIVE, "kroko-en", "Kroko", "Banafo's Kroko ASR, CC BY-SA 4.0", 68,
             "sherpa-onnx-streaming-zipformer-en-kroko-2025-08-06",
             "encoder.onnx", "decoder.onnx", "joiner.onnx", modelType = "zipformer2",
         ),
@@ -44,20 +48,22 @@ object SpeechModels {
             Role.FINAL, "parakeet-110m-en", "Parakeet small", "Lighter and quicker, misses more names. NVIDIA NeMo, CC BY 4.0", 103,
             "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8",
             "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", modelType = "nemo_transducer",
+            plainFiles = false,
         ),
         CANARY(
-            Role.FINAL, "canary-180m-en", "Canary", "In between: better than Parakeet small, quicker than large. NVIDIA NeMo, CC BY 4.0", 154,
+            Role.FINAL, "canary-180m-en", "Canary", "In between: better than Parakeet small, quicker than large. NVIDIA NeMo, CC BY 4.0", 198,
             "sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8",
             "encoder.int8.onnx", "decoder.int8.onnx", "", modelType = "canary",
         ),
         PARAKEET_LARGE(
-            Role.FINAL, "parakeet-0.6b-en", "Parakeet large", "Recommended. Hears names and places best. NVIDIA NeMo, CC BY 4.0", 460,
+            Role.FINAL, "parakeet-0.6b-en", "Parakeet large", "Recommended. Hears names and places best. NVIDIA NeMo, CC BY 4.0", 631,
             "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
             "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", modelType = "nemo_transducer",
         ),
         ;
 
         val url get() = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$archive.tar.bz2"
+        fun fileUrl(name: String) = "https://huggingface.co/csukuangfj/$archive/resolve/main/$name"
         val files get() = listOf(encoder, decoder, joiner, "tokens.txt").filter { it.isNotEmpty() }
     }
 
@@ -123,7 +129,7 @@ object SpeechModels {
         if (model == _selected.value || model == _final.value) SpeechEngine.unload()
     }
 
-    /** Fetches [model] and unpacks just the files the recognizer reads; the rest of the archive is skipped. */
+    /** Fetches just the files the recognizer reads, plain where it can, else out of the archive. */
     fun download(context: Context, model: Model) {
         val app = context.applicationContext
         val state = states.getValue(model)
@@ -134,23 +140,33 @@ object SpeechModels {
             val target = dir(app, model)
             val partial = File(target.parentFile, "${model.id}.partial").apply { deleteRecursively(); mkdirs() }
             try {
-                val conn = (URL(model.url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15_000
-                    readTimeout = 30_000
-                    instanceFollowRedirects = true
-                }
-                check(conn.responseCode == 200) { "the server answered ${conn.responseCode}" }
-                val total = conn.contentLengthLong.takeIf { it > 0 } ?: (model.downloadMb * 1_048_576L)
-                val counting = CountingStream(conn.inputStream) { read ->
+                val total = model.downloadMb * 1_048_576L
+                var done = 0L
+                fun progress(read: Long) {
                     if (cancelled == model) throw InterruptedException("cancelled")
-                    state.value = State.Downloading(((read * 100) / total).toInt().coerceIn(0, 99))
+                    state.value = State.Downloading((((done + read) * 100) / total).toInt().coerceIn(0, 99))
                 }
-                TarArchiveInputStream(BZip2CompressorInputStream(counting.buffered())).use { tar ->
-                    while (true) {
-                        val entry = tar.nextEntry ?: break
-                        val name = entry.name.substringAfterLast('/')
-                        if (entry.isDirectory || name !in model.files) continue
-                        File(partial, name).outputStream().use { tar.copyTo(it) }
+                if (model.plainFiles) {
+                    for (name in model.files) {
+                        val conn = open(model.fileUrl(name))
+                        val length = conn.contentLengthLong
+                        val file = File(partial, name)
+                        CountingStream(conn.inputStream, ::progress).use { input ->
+                            file.outputStream().use { input.copyTo(it, 256 * 1024) }
+                        }
+                        check(length <= 0 || file.length() == length) { "$name arrived cut short" }
+                        done += file.length()
+                    }
+                } else {
+                    val conn = open(model.url)
+                    val counting = CountingStream(conn.inputStream, ::progress)
+                    TarArchiveInputStream(BZip2CompressorInputStream(counting.buffered())).use { tar ->
+                        while (true) {
+                            val entry = tar.nextEntry ?: break
+                            val name = entry.name.substringAfterLast('/')
+                            if (entry.isDirectory || name !in model.files) continue
+                            File(partial, name).outputStream().use { tar.copyTo(it) }
+                        }
                     }
                 }
                 check(model.files.all { File(partial, it).isFile }) { "the archive was missing files" }
@@ -169,6 +185,13 @@ object SpeechModels {
             }
         }
     }
+
+    private fun open(url: String): HttpURLConnection =
+        (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            instanceFollowRedirects = true
+        }.also { check(it.responseCode == 200) { "the server answered ${it.responseCode}" } }
 
     /** Counts bytes as they pass, reporting about every megabyte. */
     private class CountingStream(

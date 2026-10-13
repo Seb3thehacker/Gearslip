@@ -27,7 +27,7 @@ import app.seb3thehacker.gearslip.speech.SpeechModels.State
 
 /**
  * Which speech model the voice assistant listens with, and downloading it. Each is fetched once
- * from sherpa-onnx's releases on GitHub; nothing is sent anywhere while listening.
+ * from sherpa-onnx's author ([SpeechModels] says where); nothing is sent anywhere while listening.
  */
 @Composable
 internal fun VoiceModelSection() {
@@ -38,7 +38,7 @@ internal fun VoiceModelSection() {
     SettingsSection(title = "Voice: live words") {
         Text(
             "The voice assistant turns speech into text on this phone, and nothing you say leaves it. " +
-                "It needs two models, about 515 MB together, downloaded once. Use Wi-Fi if you can. " +
+                "It needs two models, about 700 MB together, downloaded once. Use Wi-Fi if you can. " +
                 "This one writes your words as you speak.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
