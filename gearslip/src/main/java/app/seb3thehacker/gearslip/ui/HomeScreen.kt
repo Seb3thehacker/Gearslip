@@ -1,5 +1,9 @@
 package app.seb3thehacker.gearslip.ui
 
+import app.seb3thehacker.gearslip.speech.SpeechModels
+
+import androidx.compose.material3.LinearProgressIndicator
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -100,6 +104,7 @@ fun HomeScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                     StatusCard(status)
+                    VoiceDownloadCard()
                     // The first drive that worked asks once to share it, right under the result.
                     val car = workedCar
                     if (car != null && !live) {
@@ -139,6 +144,20 @@ fun HomeScreen(
         }
         // Sharing just went on from the "it worked" ask: a little thanks.
         if (celebrate) ConfettiFall(onDone = WorkedPrompt::celebrated)
+    }
+}
+
+/** While the voice models download, how far along they are; nothing otherwise. */
+@Composable
+private fun VoiceDownloadCard() {
+    val progress by SpeechModels.progress.collectAsStateWithLifecycle()
+    val percent = progress ?: return
+    Spacer(Modifier.height(16.dp))
+    SettingsCard {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Downloading voice, $percent%", style = MaterialTheme.typography.bodyLarge)
+            LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth())
+        }
     }
 }
 

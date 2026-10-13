@@ -1,6 +1,15 @@
 package app.seb3thehacker.gearslip.speech
 
+import android.Manifest
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import app.seb3thehacker.gearslip.GearslipActivity
 import app.seb3thehacker.gearslip.GearslipLog
 import java.io.File
 import java.net.HttpURLConnection
@@ -67,6 +76,11 @@ object SpeechModels {
         val files get() = listOf(encoder, decoder, joiner, "tokens.txt").filter { it.isNotEmpty() }
     }
 
+    /** What setup offers in one tap: Kroko for the live words, Canary for the final ones. */
+    val RECOMMENDED = listOf(Model.KROKO, Model.CANARY)
+
+    fun downloadRecommended(context: Context) = RECOMMENDED.forEach { download(context, it) }
+
     sealed interface State {
         data object Missing : State
         data class Downloading(val percent: Int) : State
@@ -77,6 +91,8 @@ object SpeechModels {
     private const val PREFS = "speech"
     private const val KEY_MODEL = "model"
     private const val KEY_FINAL = "final_model"
+    private const val CHANNEL = "voice_download"
+    private const val NOTIFICATION_ID = 4_312
 
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "gearslip-speech-download") }
     private val states = Model.entries.associateWith { MutableStateFlow<State>(State.Missing) }
@@ -106,6 +122,66 @@ object SpeechModels {
 
     fun state(model: Model): StateFlow<State> = states.getValue(model).asStateFlow()
 
+    /**
+     * The models fetched since the last batch finished, so the percent covers all of them and
+     * doesn't jump back to 0 when the second one starts.
+     */
+    private val batch = mutableSetOf<Model>()
+    private val _progress = MutableStateFlow<Int?>(null)
+
+    /** Percent through the current downloads, for Home and the notification; null when none run. */
+    val progress: StateFlow<Int?> = _progress.asStateFlow()
+
+    private fun updateProgress(context: Context) {
+        val percent = synchronized(batch) {
+            if (batch.none { states.getValue(it).value is State.Downloading }) {
+                batch.clear()
+                null
+            } else {
+                val done = batch.sumOf { m ->
+                    m.downloadMb * when (val st = states.getValue(m).value) {
+                        is State.Downloading -> st.percent
+                        State.Ready -> 100
+                        else -> 0
+                    }
+                }
+                done / batch.sumOf { it.downloadMb }
+            }
+        }
+        if (percent == _progress.value) return
+        _progress.value = percent
+        showProgress(context, percent)
+    }
+
+    /** A silent notification with a progress bar, so the download is visible with the app closed. */
+    private fun showProgress(context: Context, percent: Int?) {
+        val manager = NotificationManagerCompat.from(context)
+        if (percent == null) {
+            manager.cancel(NOTIFICATION_ID)
+            return
+        }
+        if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        context.getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(CHANNEL, "Voice download", NotificationManager.IMPORTANCE_LOW),
+        )
+        val open = PendingIntent.getActivity(
+            context, NOTIFICATION_ID,
+            Intent(context, GearslipActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE,
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("Downloading voice")
+            .setContentText("$percent%")
+            .setProgress(100, percent, false)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setContentIntent(open)
+            .build()
+        runCatching { manager.notify(NOTIFICATION_ID, notification) }
+    }
+
     fun dir(context: Context, model: Model) = File(File(context.filesDir, "speech"), model.id)
 
     fun isReady(context: Context, model: Model) = model.files.all { File(dir(context, model), it).isFile }
@@ -128,6 +204,7 @@ object SpeechModels {
         cancelled = model
         dir(context, model).deleteRecursively()
         states.getValue(model).value = State.Missing
+        updateProgress(context.applicationContext)
         if (model == _selected.value || model == _final.value) SpeechEngine.unload()
     }
 
@@ -137,6 +214,8 @@ object SpeechModels {
         val state = states.getValue(model)
         if (state.value is State.Downloading || state.value == State.Ready) return
         state.value = State.Downloading(0)
+        synchronized(batch) { batch.add(model) }
+        updateProgress(app)
         cancelled = null
         worker.execute {
             val target = dir(app, model)
@@ -147,6 +226,7 @@ object SpeechModels {
                 fun progress(read: Long) {
                     if (cancelled == model) throw InterruptedException("cancelled")
                     state.value = State.Downloading((((done + read) * 100) / total).toInt().coerceIn(0, 99))
+                    updateProgress(app)
                 }
                 if (model.plainFiles) {
                     for (name in model.files) {
@@ -176,6 +256,7 @@ object SpeechModels {
                 check(partial.renameTo(target)) { "couldn't store the model" }
                 GearslipLog.i("speech: downloaded ${model.label}")
                 state.value = State.Ready
+                updateProgress(app)
             } catch (e: Exception) {
                 partial.deleteRecursively()
                 if (cancelled == model) {
@@ -184,6 +265,7 @@ object SpeechModels {
                     GearslipLog.w("speech: download of ${model.label} failed: ${e.message}")
                     state.value = State.Failed(e.message ?: e.javaClass.simpleName)
                 }
+                updateProgress(app)
             }
         }
     }

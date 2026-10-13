@@ -409,7 +409,7 @@ private fun BadgeStep(
 private fun VoiceStep(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit, key: IntroStep) {
     val context = LocalContext.current
     remember { SpeechModels.init(context) }
-    val needed = listOf(SpeechModels.Model.KROKO, SpeechModels.Model.CANARY)
+    val needed = SpeechModels.RECOMMENDED
     val states = needed.map { SpeechModels.state(it).collectAsState().value }
     val ready = states.all { it == SpeechModels.State.Ready }
     val label = when {
@@ -423,7 +423,7 @@ private fun VoiceStep(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUn
         "Tap the mic, or press the talk button on your wheel, and speak. Your phone turns speech " +
             "into text by itself, and nothing you say leaves it. Say \"help\" in the car for the full list.",
         key,
-        action = if (ready) null else label to { needed.forEach { SpeechModels.download(context, it) } },
+        action = if (ready) null else label to { SpeechModels.downloadRecommended(context) },
         outlined = true,
         extra = { CommandDrift(c, cq, cqSp, key) },
     ) { MicIcon(c.onPrimaryC) }

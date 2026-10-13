@@ -1,5 +1,11 @@
 package app.seb3thehacker.gearslip.ui
 
+import app.seb3thehacker.gearslip.speech.SpeechModels
+
+import androidx.compose.material3.MaterialTheme
+
+import androidx.compose.material3.LinearProgressIndicator
+
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -301,6 +307,23 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
         ),
     )
 
+    // --- Voice: both recommended models in one tap, skipped once they're on the phone ---
+    if (!SpeechModels.RECOMMENDED.all { SpeechModels.isReady(context, it) }) {
+        add(
+            GuidePage(
+                title = "Voice.",
+                explanation = "Ask for directions, music, or a call by voice. Your phone turns speech " +
+                    "into text by itself, and nothing you say leaves it. It needs " +
+                    "${SpeechModels.RECOMMENDED.sumOf { it.downloadMb }} MB, downloaded once. Use Wi-Fi if you can.",
+                icon = { MicIcon(it) },
+                optional = true,
+                actionLabel = "Download voice",
+                onAction = { SpeechModels.downloadRecommended(context) },
+                content = { VoiceDownloadStatus() },
+            ),
+        )
+    }
+
     // --- Optional: each is skipped once its actual effect is already in place --------
     if (!hasProjectMediaOp(context)) {
         add(
@@ -364,6 +387,25 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
  * Bluetooth or USB for the car's music, as two cards. Bluetooth comes first and is picked for a
  * driver who hasn't chosen yet: it never asks for consent, and the map app's voice reaches the car.
  */
+/** How the voice download is going: a bar while it runs, a line once it's done or failed. */
+@Composable
+private fun VoiceDownloadStatus() {
+    val context = LocalContext.current
+    val progress by SpeechModels.progress.collectAsState()
+    val states = SpeechModels.RECOMMENDED.map { SpeechModels.state(it).collectAsState().value }
+    val line = when {
+        progress != null -> "Downloading, $progress%. You can carry on; it keeps going."
+        states.all { it == SpeechModels.State.Ready } -> "Voice is ready."
+        states.any { it is SpeechModels.State.Failed } -> "The download didn't finish. Tap Download voice to try again."
+        else -> null
+    }
+    LaunchedEffect(Unit) { SpeechModels.init(context) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        progress?.let { LinearProgressIndicator(progress = { it / 100f }, modifier = Modifier.fillMaxWidth()) }
+        line?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
 @Composable
 private fun AudioChoice() {
     val usb by CarSettings.pipeAudio.collectAsState()
