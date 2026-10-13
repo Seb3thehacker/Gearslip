@@ -513,7 +513,14 @@ class GearslipRunner(
         }
         val config = mic.configs.first()
         log.i("car microphone: channel=${mic.serviceId} ${mic.codecName} ${config.sampleRate}Hz/${config.bits}bit/x${config.channels}")
-        CarMic.current = CarMic(mic) { id, body -> send(id, body, encrypted = true, channel = mic.serviceId) }
+        CarMic.current = CarMic(
+            mic,
+            sendOnChannel = { id, body -> send(id, body, encrypted = true, channel = mic.serviceId) },
+            // VoiceSessionNotification { status = 1 START, 2 END }, on the control channel.
+            voiceSession = { start ->
+                send(MSG_VOICE_SESSION_NOTIFICATION, Protobuf.varintField(1, if (start) 1L else 2L), encrypted = true)
+            },
+        )
         openChannel(mic.serviceId)
     }
 
@@ -1244,6 +1251,7 @@ class GearslipRunner(
         const val MSG_PING_RESPONSE = 12
         const val MSG_BYEBYE_REQUEST = 15
         const val MSG_BYEBYE_RESPONSE = 16
+        const val MSG_VOICE_SESSION_NOTIFICATION = 17
         const val MSG_CHANNEL_OPEN_REQUEST = 7
         const val MSG_CHANNEL_OPEN_RESPONSE = 8
 
