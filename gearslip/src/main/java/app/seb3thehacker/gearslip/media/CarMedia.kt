@@ -156,6 +156,9 @@ class CarMedia(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private var connecting: MediaApp? = null
 
+    /** The music app Gearslip is attached to, for the assistant to name; null when there's none. */
+    val appLabel: String? get() = connecting?.label?.takeIf { controller != null }
+
     private val _phase = MutableStateFlow(Phase.IDLE)
     val phase: StateFlow<Phase> = _phase.asStateFlow()
 
@@ -236,6 +239,12 @@ class CarMedia(private val context: Context) {
         connecting = app
         _phase.value = Phase.CONNECTING
         _browse.value = BrowseState()
+        // Known to refuse its library (Spotify): asking only costs the seconds it takes to say no,
+        // so go straight to its playback session.
+        if (KnownApps.playerWorks(app.component.packageName)) {
+            attachToSession(app)
+            return
+        }
         val mb = MediaBrowser(context, app.component, object : MediaBrowser.ConnectionCallback() {
             override fun onConnected() = this@CarMedia.onConnected(app)
             override fun onConnectionFailed() {
@@ -273,7 +282,12 @@ class CarMedia(private val context: Context) {
             return
         }
         if (session == null) {
-            val limit = if (launched) SESSION_RETRIES_LAUNCHED else SESSION_RETRIES
+            // A known session-only app that isn't running won't start by waiting: say so at once.
+            val limit = when {
+                launched -> SESSION_RETRIES_LAUNCHED
+                KnownApps.playerWorks(app.component.packageName) -> 0
+                else -> SESSION_RETRIES
+            }
             // The app only publishes its session once its service has started; give it a moment.
             if (attempt < limit) {
                 main.postDelayed({ attachToSession(app, attempt + 1, launched) }, SESSION_RETRY_MS)
@@ -454,7 +468,7 @@ class CarMedia(private val context: Context) {
         }
         val component = searchComponent
         if (component == null) {
-            _results.value = Results(q, emptyList(), supported = false)
+            noLibrarySearch(q)
             return
         }
         resultsQuery = q
@@ -476,13 +490,13 @@ class CarMedia(private val context: Context) {
             override fun onConnectionFailed() {
                 GearslipLog.w("media: no library connection for search")
                 searchBrowser = null
-                resultsQuery?.let { _results.value = Results(it, emptyList(), supported = false) }
+                resultsQuery?.let { noLibrarySearch(it) }
             }
         }, null)
         searchBrowser = created
         runCatching { created.connect() }.onFailure {
             searchBrowser = null
-            _results.value = Results(q, emptyList(), supported = false)
+            noLibrarySearch(q)
         }
     }
 
@@ -492,18 +506,42 @@ class CarMedia(private val context: Context) {
                 override fun onSearchResult(query: String, extras: Bundle?, items: List<MediaBrowserCompat.MediaItem>) {
                     if (query != resultsQuery) return
                     GearslipLog.i("media: library search found ${items.size}")
-                    _results.value = Results(query, items.map(::entryOfCompat))
+                    val entries = items.map(::entryOfCompat)
+                    if (query == playFirstFor) {
+                        playFirstFor = null
+                        val first = entries.firstOrNull { it.playable } ?: entries.firstOrNull()
+                        if (first == null) {
+                            clearResults()
+                            search(query)
+                        } else {
+                            GearslipLog.i("media: playing the library's best match")
+                            clearResults()
+                            searchBefore = _now.value
+                            _search.value = Search(query)
+                            main.removeCallbacks(searchTimeout)
+                            controller?.transportControls?.playFromMediaId(first.id, null)
+                            main.postDelayed(searchTimeout, SEARCH_WAIT_MS)
+                        }
+                        return
+                    }
+                    _results.value = Results(query, entries)
                 }
 
                 override fun onError(query: String, extras: Bundle?) {
                     if (query != resultsQuery) return
+                    if (query == playFirstFor) {
+                        playFirstFor = null
+                        clearResults()
+                        search(query)
+                        return
+                    }
                     GearslipLog.i("media: the app has no library search")
                     _results.value = Results(query, emptyList(), supported = false)
                 }
             })
         }.onFailure {
             GearslipLog.w("media: library search failed: ${it.message}")
-            _results.value = Results(q, emptyList(), supported = false)
+            noLibrarySearch(q)
         }
     }
 
@@ -518,6 +556,36 @@ class CarMedia(private val context: Context) {
             browsable = item.isBrowsable,
             playable = item.isPlayable,
         )
+    }
+
+    /** The library can't search: a voice "play X" falls back to the app's own search; a typed one says so. */
+    private fun noLibrarySearch(q: String) {
+        if (q == playFirstFor) {
+            playFirstFor = null
+            clearResults()
+            search(q)
+        } else {
+            _results.value = Results(q, emptyList(), supported = false)
+        }
+    }
+
+    /** A voice "play X" waiting on the library search, to play its first match instead of listing them. */
+    private var playFirstFor: String? = null
+
+    /**
+     * Plays the best match for [query], for voice. Asks the app's library first and plays its top
+     * result, which apps like ViVi honour where they ignore [search]; without a library search,
+     * falls back to [search].
+     */
+    fun playBestMatch(query: String) {
+        val q = query.trim()
+        if (q.isEmpty()) return
+        if (!canSearchLibrary) {
+            search(q)
+            return
+        }
+        playFirstFor = q
+        searchLibrary(q)
     }
 
     /** The connected app's service, for the search connection; null when nothing is connected. */

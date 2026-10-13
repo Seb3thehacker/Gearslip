@@ -73,6 +73,7 @@ fun SettingsScreen(
     onOpenRecommendedApps: () -> Unit,
     onOpenWhatsNew: () -> Unit,
     onReplayTutorial: () -> Unit,
+    onReplayIntro: () -> Unit,
     atUsageNotes: Boolean = false,
 ) {
     val scroll = rememberScrollState()
@@ -105,9 +106,10 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             Spacer(Modifier.height(0.dp))
-            AboutSection(onOpenWhatsNew, onReplayTutorial)
+            AboutSection(onOpenWhatsNew, onReplayTutorial, onReplayIntro)
             ConnectionSection()
             CarAudioSection()
+            VoiceModelSection()
             if (SHOW_RECOMMENDED_APPS) AppsSection(onOpenRecommendedApps)
             CertificateSection()
             SettingsSection("Usage notes", header = USAGE_STATS_INTRO) { UsageStatsRows() }
@@ -125,7 +127,7 @@ private fun Arrow() = Icon(
 
 /** What's new, updates and the setup guide, one tap from the top. */
 @Composable
-private fun AboutSection(onOpenWhatsNew: () -> Unit, onReplayTutorial: () -> Unit) {
+private fun AboutSection(onOpenWhatsNew: () -> Unit, onReplayTutorial: () -> Unit, onReplayIntro: () -> Unit) {
     SettingsSection {
         SettingsRow(
             "What's new",
@@ -148,6 +150,16 @@ private fun AboutSection(onOpenWhatsNew: () -> Unit, onReplayTutorial: () -> Uni
             icon = Icons.Filled.Refresh,
             trailing = { Arrow() },
         )
+        SettingsDivider()
+        SettingsRow(
+            "Replay the ${Intro.release} intro",
+            Modifier.clickable(onClick = onReplayIntro),
+            subtitle = "What's in this release, in a few taps",
+            icon = Icons.Filled.Star,
+            trailing = { Arrow() },
+        )
+        SettingsDivider()
+        AboutLinkRows()
     }
 }
 

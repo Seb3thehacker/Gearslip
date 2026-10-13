@@ -16,6 +16,7 @@ import android.media.AudioRecord
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.IBinder
+import android.os.Process
 import app.seb3thehacker.gearslip.GearslipLog
 import kotlin.math.abs
 
@@ -147,6 +148,9 @@ class AudioCaptureService : Service() {
 
         reading = true
         thread = Thread({
+            // A busy phone (a map app drawing, the video encoder) would otherwise starve this
+            // loop, and the car hears every late read as a skip.
+            Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
             val buffer = ByteArray(CHUNK_BYTES)
             var peak = 0
             var heardAt = System.currentTimeMillis()

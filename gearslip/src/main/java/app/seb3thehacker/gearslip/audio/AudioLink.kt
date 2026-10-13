@@ -147,7 +147,8 @@ class AudioLink(
     fun onFocus(state: Int) {
         val name = FOCUS_STATES[state] ?: "unknown($state)"
         GearslipLog.i("audio: <- AudioFocusResponse state=$name")
-        focusGranted = state == FOCUS_STATE_GAIN || state == FOCUS_STATE_GAIN_TRANSIENT
+        focusGranted = state == FOCUS_STATE_GAIN || state == FOCUS_STATE_GAIN_TRANSIENT ||
+            state == FOCUS_STATE_GAIN_MEDIA_ONLY
         if (focusGranted) startStream() else stop()
     }
 
@@ -257,13 +258,16 @@ class AudioLink(
         private const val FOCUS_RELEASE = 4
         private const val FOCUS_STATE_GAIN = 1
         private const val FOCUS_STATE_GAIN_TRANSIENT = 2
+        private const val FOCUS_STATE_GAIN_MEDIA_ONLY = 6
         private const val SESSION_ID = 2
         private const val STALL_MS = 2_000L
         private const val CHUNK_LOG_EVERY = 200 // about every four seconds
         private const val CONFIG_WAIT_MS = 1_000L
 
+        // AudioFocusStateNotification.AudioFocusState in aasdk.
         private val FOCUS_STATES = mapOf(
-            1 to "GAIN", 2 to "GAIN_TRANSIENT", 3 to "LOSS", 4 to "LOSS_TRANSIENT",
+            1 to "GAIN", 2 to "GAIN_TRANSIENT", 3 to "LOSS", 4 to "LOSS_TRANSIENT_CAN_DUCK",
+            5 to "LOSS_TRANSIENT", 6 to "GAIN_MEDIA_ONLY", 7 to "GAIN_TRANSIENT_GUIDANCE_ONLY",
         )
     }
 }

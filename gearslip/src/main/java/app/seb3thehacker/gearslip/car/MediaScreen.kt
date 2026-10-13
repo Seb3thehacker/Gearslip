@@ -61,7 +61,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import app.seb3thehacker.gearslip.audio.CarAudio
 import app.seb3thehacker.gearslip.media.CarMedia
 import app.seb3thehacker.gearslip.media.MediaApp
 import app.seb3thehacker.gearslip.media.MediaArt
@@ -88,11 +87,9 @@ fun MediaScreen(app: MediaApp, onExit: () -> Unit) {
     val queue by media.queue.collectAsStateWithLifecycle()
     val browse by media.browse.collectAsStateWithLifecycle()
     val rejection by media.rejection.collectAsStateWithLifecycle()
-    val capture by CarAudio.capture.collectAsStateWithLifecycle()
     val search by media.search.collectAsStateWithLifecycle()
     var tab by remember { mutableStateOf(Tab.NOW_PLAYING) }
     var searching by remember { mutableStateOf(false) }
-    val searchAllowed = CarSettings.experimentalFeaturesEnabled.collectAsState().value && CarSettings.mediaSearchEnabled.collectAsState().value
 
     // The connection outlives this screen: the home screen's player is the same one.
     LaunchedEffect(app) { CarServices.openMedia(app) }
@@ -174,7 +171,6 @@ fun MediaScreen(app: MediaApp, onExit: () -> Unit) {
                 } else {
                     CompactPlayer(now, media, Modifier.weight(1f).fillMaxWidth())
                 }
-                AudioBadge(capture)
             }
             Column(Modifier.weight(1.2f).fillMaxHeight()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -182,7 +178,7 @@ fun MediaScreen(app: MediaApp, onExit: () -> Unit) {
                     MediaTab("Browse", tab == Tab.BROWSE, Modifier.weight(1f)) { tab = Tab.BROWSE }
                     MediaTab("Up next", tab == Tab.QUEUE, Modifier.weight(1f)) { tab = Tab.QUEUE }
                     MediaTab("Lyrics", tab == Tab.LYRICS, Modifier.weight(1f)) { tab = Tab.LYRICS }
-                    if (searchAllowed && (now.canSearch || media.canSearchLibrary)) {
+                    if (now.canSearch || media.canSearchLibrary) {
                         GsIconButton(
                             Icons.Filled.Search,
                             "Search ${app.label}",
@@ -445,17 +441,6 @@ private sealed interface LyricsState {
     data object Loading : LyricsState
     data object Missing : LyricsState
     class Found(val result: LyricsResult) : LyricsState
-}
-
-@Composable
-private fun AudioBadge(capture: CarAudio.Capture) {
-    val text = when (capture) {
-        CarAudio.Capture.ON -> "Audio to car"
-        CarAudio.Capture.ASKING -> "Allow audio capture on the phone"
-        CarAudio.Capture.DENIED -> "Audio stays on the phone"
-        CarAudio.Capture.OFF -> return
-    }
-    Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @Composable

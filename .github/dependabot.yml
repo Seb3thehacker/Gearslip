@@ -1,0 +1,15 @@
+# Weekly pull requests for newer Gradle libraries and GitHub Actions, aimed at experimental,
+# where unreleased code lands. Security fixes come separately, as soon as an alert opens.
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    target-branch: experimental
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: experimental
+    schedule:
+      interval: weekly

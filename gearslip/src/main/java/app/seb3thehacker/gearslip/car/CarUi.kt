@@ -256,8 +256,9 @@ fun CarUi() {
                             modifier = Modifier.align(Alignment.TopEnd),
                         )
                         // Above the popup: a call is more urgent than any notification.
+                        VoiceHelpOverlay(Modifier.align(Alignment.Center))
                         CallOverlay(Modifier.align(Alignment.TopCenter))
-                        AssistantOverlay(Modifier.align(Alignment.TopCenter))
+                        AssistantOverlay(Modifier.align(Alignment.BottomCenter))
                         if (app.seb3thehacker.gearslip.BuildConfig.DEBUG) {
                             // Bottom corner, not top: a screen's own header almost always puts
                             // something in the top-right (settings, search, a Liked Songs
@@ -469,12 +470,8 @@ private fun CarNavBar(navigator: CarNavigator) {
                 NavHomeButton(navigator, entries, running)
                 Spacer(Modifier.width(6.dp))
                 NavItem(MediaIcons.Apps, navigator.current == CarScreen.Apps) { navigator.apps() }
-                val experimentalFeatures by CarSettings.experimentalFeaturesEnabled.collectAsState()
-                val voiceEnabled by CarSettings.voiceAssistantEnabled.collectAsState()
-                if (experimentalFeatures && voiceEnabled) {
-                    Spacer(Modifier.width(6.dp))
-                    NavAssistantIcon()
-                }
+                Spacer(Modifier.width(6.dp))
+                NavAssistantIcon()
 
                 // Pinned shortcuts, then whatever else is open right now. A pinned app that's also
                 // open stays in its pinned spot, marked with a dot, instead of showing up twice.

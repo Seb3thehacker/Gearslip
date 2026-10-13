@@ -38,6 +38,8 @@ object CarAssistant {
         val heard: String = "",
         val reply: String = "",
         val missingPermission: Boolean = false,
+        /** False from the press until the microphone is actually open, so the overlay doesn't claim to listen early. */
+        val ready: Boolean = false,
     )
 
     private val _state = MutableStateFlow(State())
@@ -89,6 +91,7 @@ object CarAssistant {
         tts?.stop()
         _state.value = State(Phase.LISTENING)
         listenOnce(
+            onListening = { _state.value = _state.value.copy(ready = true) },
             onPartial = { text -> _state.value = _state.value.copy(heard = text) },
             onHeard = { _state.value = _state.value.copy(phase = Phase.THINKING) },
             onResult = { text ->
@@ -174,15 +177,16 @@ object CarAssistant {
         onSpeaking: () -> Unit = {},
     ) {
         cancel()
-        listenOnce(onPartial, onHeard = {}, onResult, onError, cue, onSpeaking)
+        listenOnce(onPartial, onHeard = {}, onResult = onResult, onError = onError, cue = cue, onSpeaking = onSpeaking)
     }
 
     /**
-     * One phrase, through Gearslip's own [SpeechEngine]. The phone's recognizer is only a fallback
-     * for when the engine itself can't run, since plenty of phones (GrapheneOS among them) have none.
+     * One phrase, through Gearslip's own [SpeechEngine], or the phone's recognizer when the driver
+     * chose it in settings. Never the phone's on its own: on most phones that's Google's.
      */
     private fun listenOnce(
         onPartial: (String) -> Unit,
+        onListening: () -> Unit = {},
         onHeard: () -> Unit,
         onResult: (String) -> Unit,
         onError: (String) -> Unit,
@@ -190,24 +194,24 @@ object CarAssistant {
         onSpeaking: () -> Unit = {},
     ) {
         val context = appContext ?: return onError("Speech isn't ready yet.")
+        if (CarSettings.systemSpeech.value && SpeechRecognizer.isRecognitionAvailable(context)) {
+            return systemListen(context, onListening, onPartial, onHeard, onResult, onError)
+        }
         SpeechEngine.listen(
             context,
             cue = cue,
             onSpeaking = onSpeaking,
+            onPartial = onPartial,
+            onListening = onListening,
             onHeard = onHeard,
             onResult = onResult,
-            onError = { message ->
-                if (message == SpeechEngine.NOT_LOADED && SpeechRecognizer.isRecognitionAvailable(context)) {
-                    systemListen(context, onPartial, onHeard, onResult, onError)
-                } else {
-                    onError(message)
-                }
-            },
+            onError = onError,
         )
     }
 
     private fun systemListen(
         context: Context,
+        onListening: () -> Unit,
         onPartial: (String) -> Unit,
         onHeard: () -> Unit,
         onResult: (String) -> Unit,
@@ -216,7 +220,7 @@ object CarAssistant {
         val r = SpeechRecognizer.createSpeechRecognizer(context)
         recognizer = r
         r.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onReadyForSpeech(params: Bundle?) = onListening()
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
             override fun onBufferReceived(buffer: ByteArray?) {}

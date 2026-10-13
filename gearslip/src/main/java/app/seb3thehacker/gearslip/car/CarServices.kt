@@ -247,6 +247,8 @@ object CarServices {
         runCatching { media.disconnect() }
         runCatching { browse.disconnect() }
         CarAssistant.cancel()
+        // About 900 MB that nothing needs once the car's gone.
+        app.seb3thehacker.gearslip.speech.SpeechEngine.unload()
         CarAudio.release()
         _mediaApp.value = null
         navStopped = false
