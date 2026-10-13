@@ -28,6 +28,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -97,6 +98,7 @@ private val USB_AUDIO = listOf(
 fun HelpScreen(onBack: () -> Unit, onRequestCallScreening: () -> Unit) {
     val car = remember(onRequestCallScreening) { inTheCar(onRequestCallScreening) }
     val usb by CarSettings.pipeAudio.collectAsState()
+    val context = LocalContext.current
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -125,8 +127,12 @@ fun HelpScreen(onBack: () -> Unit, onRequestCallScreening: () -> Unit) {
                     "Most cars work. Starting around 2020, some cars added newer security " +
                         "standards that reject Gearslip's certificate, and Gearslip can't run in those cars.",
                     style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
                 )
+                FilledTonalButton(
+                    onClick = { GearslipLinks.open(context, GearslipLinks.CARS) },
+                    modifier = Modifier.padding(16.dp),
+                ) { Text("See the full list") }
             }
             Steps("Before your first drive", FIRST_DRIVE)
             Steps("In the car", car)

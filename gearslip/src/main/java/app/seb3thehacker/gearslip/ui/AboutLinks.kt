@@ -19,6 +19,7 @@ import androidx.compose.ui.platform.LocalContext
 internal object GearslipLinks {
     const val MATRIX = "https://matrix.to/#/!mf0_mgBd5KqKpc9FfX_wHp1jFCcwAtPrndIn_oGIyMk?via=matrix.org"
     const val SOURCE = "https://github.com/Seb3thehacker/gearslip"
+    const val CARS = "$SOURCE/blob/main/CARS.md"
 
     fun open(context: Context, url: String) {
         runCatching {

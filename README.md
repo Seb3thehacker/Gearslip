@@ -9,7 +9,8 @@ An Android Auto alternative built for everyone.
 ## Which cars work
 
 Most cars work. Starting around 2020, some cars added newer security standards that reject
-Gearslip's certificate, and Gearslip can't run in those cars.
+Gearslip's certificate, and Gearslip can't run in those cars. [CARS.md](CARS.md) lists the
+cars drivers have confirmed.
 
 ## What Gearslip is
 
