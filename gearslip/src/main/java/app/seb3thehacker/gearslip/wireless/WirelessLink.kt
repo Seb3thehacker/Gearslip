@@ -115,6 +115,7 @@ object WirelessLink {
     /** Closes the Bluetooth channel, the socket and the Wi-Fi request. Safe to call any time. */
     fun stop(context: Context) {
         tcpRun++
+        val starting = worker != null && SessionStatus.state.value.phase == SessionStatus.Phase.CONNECTING
         worker?.interrupt()
         worker = null
         runCatching { listener?.close() }
@@ -127,6 +128,11 @@ object WirelessLink {
             runCatching { context.getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(cb) }
         }
         network = null
+        // Stopped before the car's session began, so nothing else resets Home's card.
+        if (starting) {
+            log.i("wireless start-up stopped")
+            SessionStatus.disconnected()
+        }
     }
 
     /** A stable id for this phone as this app sees it, standing in for the serial a real phone sends. */
