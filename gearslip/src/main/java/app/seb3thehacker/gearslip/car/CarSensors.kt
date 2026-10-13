@@ -5,16 +5,7 @@ import app.seb3thehacker.gearslip.Wire
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-/**
- * Everything the head unit's sensor channel has offered and sent, for the "Vehicle data" screen.
- *
- * [ServiceDiscovery.findSensorService] tells us which numeric sensor types this head unit is
- * willing to stream; [SensorType] names the ones publicly documented by other AA reverse-engineering
- * projects (aasdk, openauto). That mapping is carried over from other projects, not verified
- * against this exact unit, so it's a label, not a guarantee - the raw field dump next to it is
- * the ground truth. Once [onEvent] starts decoding real traffic from the 2018 Uconnect, correct
- * any type that turns out to be mislabeled.
- */
+/** Raw sensor readings, keyed by SensorBatch field number, which matches the sensor type id. */
 object CarSensors {
 
     data class Reading(val typeId: Int, val typeName: String, val raw: String, val updatedAtMs: Long)
@@ -30,16 +21,10 @@ object CarSensors {
         }
     }
 
-    /**
-     * One SensorEventIndication. Every reverse-engineered version of this message multiplexes
-     * every sensor type into one shared set of message-level field numbers (field N = "the data
-     * for sensor type N", roughly) rather than tagging events with the type id from
-     * SensorType.type - so field number is read here as a best-effort type id, same as the
-     * other services in this file.
-     */
+    /** Each SensorBatch field contains repeated readings of one sensor type. */
     fun onEvent(body: ByteArray) {
         val now = System.currentTimeMillis()
-        val fields = Wire.fields(body)
+        val fields = Wire.fields(body).filter { it.wireType == 2 }
         val byType = fields.groupBy { it.number }
         val updated = byType.mapValues { (number, group) ->
             Reading(
@@ -61,10 +46,7 @@ object CarSensors {
     }
 }
 
-/**
- * Sensor type ids as named across public Android Auto reverse-engineering references. Treated as
- * a label, not a fact - see [CarSensors] doc.
- */
+/** Sensor type values shared by the discovery service and SensorBatch. */
 object SensorType {
     private val NAMES = mapOf(
         1 to "Location (GPS)",
@@ -89,6 +71,10 @@ object SensorType {
         20 to "Gyroscope",
         21 to "GPS satellites",
         22 to "Toll card",
+        23 to "Vehicle energy model",
+        24 to "Trailer",
+        25 to "Raw vehicle energy model",
+        26 to "Raw EV trip settings",
     )
 
     fun name(id: Int): String = NAMES[id]?.let { "$it (#$id)" } ?: "Sensor #$id"

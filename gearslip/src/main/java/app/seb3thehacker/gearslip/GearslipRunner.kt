@@ -11,6 +11,7 @@ import app.seb3thehacker.gearslip.car.CarKeys
 import app.seb3thehacker.gearslip.car.CarSensors
 import app.seb3thehacker.gearslip.car.CarServices
 import app.seb3thehacker.gearslip.car.CarSettings
+import app.seb3thehacker.gearslip.protocol.InputProtocol
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.FutureTask
@@ -530,12 +531,15 @@ class GearslipRunner(
 
     /** Turn-by-turn for the instrument cluster: the next turn, its road, and how far. */
     private fun startClusterNavChannel(serviceDiscoveryResponse: ByteArray) {
-        val channel = ServiceDiscovery.findNavStatusChannel(serviceDiscoveryResponse) ?: run {
+        val navigation = ServiceDiscovery.findNavStatusService(serviceDiscoveryResponse) ?: run {
             log.i("no navigation status channel - the cluster won't show turns")
             return
         }
+        val channel = navigation.serviceId
         log.i("navigation status channel: $channel")
-        clusterNav = ClusterNav(channel) { id, body -> send(id, body, encrypted = true, channel = channel) }
+        clusterNav = ClusterNav(channel, navigation.minimumIntervalMs.toLong()) { id, body ->
+            send(id, body, encrypted = true, channel = channel)
+        }
         openChannel(channel)
     }
 
@@ -591,7 +595,7 @@ class GearslipRunner(
      */
     private fun onNightSensor(body: ByteArray) {
         val night = Wire.bytes(Wire.fields(body), SENSOR_NIGHT) ?: return
-        val isNight = Wire.varint(Wire.fields(night), 1) == 1L
+        val isNight = (Wire.varint(Wire.fields(night), 1) ?: 0L) != 0L
         if (isNight != lastSensorNight) {
             lastSensorNight = isNight
             log.i("car says it's ${if (isNight) "night" else "day"}")
@@ -674,50 +678,37 @@ class GearslipRunner(
             MSG_KEY_BINDING_RESPONSE ->
                 log.i("<- KeyBindingResponse: status=${Protobuf.readInt32Field(body, 1)}")
 
-            MSG_INPUT_REPORT -> {
-                val report = Wire.fields(body)
-                // The 2018 Uconnect agrees to Exit but keeps showing our last frame and sending
-                // touches, which looked like a crash. A touch means our screen is still up there.
-                if (videoStarted && !videoProjected && Wire.bytes(report, 3) != null) {
-                    log.w("the car said it took its screen back but still sends touches - showing ours again")
-                    onVideoFocus(VIDEO_FOCUS_PROJECTED)
-                }
-                Wire.bytes(report, 4)?.let(::onKeyEvent)
-                Wire.bytes(report, 6)?.let(::onRelativeEvent)
-                val touch = Wire.bytes(report, 3) ?: Wire.bytes(report, 7)
-                if (touch == null) {
-                    return
-                }
-                val touchFields = Wire.fields(touch)
-                val action = Wire.varint(touchFields, 3)?.toInt() ?: 0
-                val pointers = Wire.allBytes(touchFields, 1)
-                if (pointers.isEmpty()) return
-                val size = videoConfigs.getOrNull(selectedConfigIndex ?: 0)?.pixelSize()
-                val points = pointers.mapIndexedNotNull { index, pointer ->
-                    val fields = Wire.fields(pointer)
-                    val rawX = Wire.varint(fields, 1)?.toInt() ?: return@mapIndexedNotNull null
-                    val rawY = Wire.varint(fields, 2)?.toInt() ?: return@mapIndexedNotNull null
-                    val id = Wire.varint(fields, 3)?.toInt() ?: index
-                    TouchPoint(id, clamp(rawX, size?.first), clamp(rawY, size?.second))
-                }
-                if (points.isEmpty()) return
-                val actionIndex = (Wire.varint(touchFields, 2)?.toInt() ?: 0).coerceIn(0, points.size - 1)
-                if (points.size > 1 && touchesSeen < 3) {
-                    log.i("multi-touch: ${points.size} pointers, action=$action index=$actionIndex")
-                }
-
-                touchesSeen++
-                if (touchesSeen <= 10 || action == ACTION_DOWN || action == ACTION_UP) {
-                    val at = points[actionIndex]
-                    log.i("<- Touch action=$action at (${at.x.toInt()},${at.y.toInt()}) pointers=${points.size}")
-                }
-                // Time the next frame against this tap: see [reportTouchLatency].
-                if (action == ACTION_DOWN || action == ACTION_UP) touchAtUs = System.nanoTime() / 1000
-                projection?.onTouch(action, actionIndex, points)
-            }
+            MSG_INPUT_REPORT -> onInputReport(body)
 
             else -> log.i("<- unhandled input message id=$messageId (${body.size} bytes)")
         }
+    }
+
+    private fun onInputReport(body: ByteArray) {
+        val report = Wire.fields(body)
+        if (Wire.varint(report, 1) == null) return
+        Wire.bytes(report, 4)?.let(::onKeyEvent)
+        Wire.bytes(report, 6)?.let(::onRelativeEvent)
+        // Touchpads (field 7) need a separate gesture pipeline; their coordinates are not
+        // positions on the projected screen.
+        val touch = Wire.bytes(report, 3)
+        if (touch == null) {
+            return
+        }
+        val size = videoConfigs.getOrNull(selectedConfigIndex ?: 0)?.pixelSize()
+        val (action, actionIndex, points) = InputProtocol.touch(touch, size) ?: return
+        if (points.size > 1 && touchesSeen < 3) {
+            log.i("multi-touch: ${points.size} pointers, action=$action index=$actionIndex")
+        }
+
+        touchesSeen++
+        if (touchesSeen <= 10 || action == ACTION_DOWN || action == ACTION_UP) {
+            val at = points[actionIndex]
+            log.i("<- Touch action=$action at (${at.x.toInt()},${at.y.toInt()}) pointers=${points.size}")
+        }
+        // Time the next frame against this tap: see [reportTouchLatency].
+        if (action == ACTION_DOWN || action == ACTION_UP) touchAtUs = System.nanoTime() / 1000
+        projection?.onTouch(action, actionIndex, points)
     }
 
     /**
@@ -746,8 +737,9 @@ class GearslipRunner(
         for (key in Wire.allBytes(Wire.fields(keyEvent), 1)) {
             val fields = Wire.fields(key)
             val keycode = Wire.varint(fields, 1)?.toInt() ?: continue
-            val down = Wire.varint(fields, 2) == 1L
-            val longPress = Wire.varint(fields, 4) == 1L
+            val down = (Wire.varint(fields, 2) ?: continue) != 0L
+            if (Wire.varint(fields, 3) == null) continue
+            val longPress = (Wire.varint(fields, 4) ?: 0L) != 0L
             log.i("<- key event: keycode=$keycode ${if (down) "down" else "up"}${if (longPress) " long" else ""}")
             if (!CarKeys.onKey(keycode, down, longPress) && down) log.i("unhandled keycode=$keycode")
         }
@@ -763,6 +755,7 @@ class GearslipRunner(
             val keycode = Wire.varint(fields, 1)?.toInt() ?: continue
             // int32, so a turn the other way arrives as a 64-bit two's complement varint.
             val delta = Wire.varint(fields, 2)?.toInt() ?: continue
+            if (keycode != 65536 || delta == 0) continue
             log.i("<- relative event: keycode=$keycode delta=$delta")
             CarKeys.onRotate(delta)
         }
@@ -1050,13 +1043,6 @@ class GearslipRunner(
         val draw = (presentationTimeUs - touchAt) / 1000
         val encode = (nowUs - presentationTimeUs) / 1000
         log.i("touch -> frame: ${draw + encode}ms (draw ${draw}ms, encode and wait ${encode}ms)")
-    }
-
-    private fun clamp(value: Int, limit: Int?): Float = when {
-        limit == null -> value.toFloat()
-        value < 0 -> 0f
-        value >= limit -> (limit - 1).toFloat()
-        else -> value.toFloat()
     }
 
     private fun onPingRequest(body: ByteArray) {
