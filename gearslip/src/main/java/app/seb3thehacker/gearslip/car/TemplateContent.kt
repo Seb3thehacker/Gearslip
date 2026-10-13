@@ -45,6 +45,7 @@ import androidx.car.app.model.MessageTemplate
 import androidx.car.app.model.PaneTemplate
 import androidx.car.app.model.Row as CarRow
 import androidx.car.app.model.SearchTemplate
+import androidx.compose.foundation.clickable
 import androidx.car.app.model.Section
 import androidx.car.app.model.SectionedItemTemplate
 import androidx.car.app.model.TabTemplate
@@ -238,6 +239,9 @@ private fun SearchContent(template: SearchTemplate, modifier: Modifier) {
     // initialSearchText would fight whatever is being typed.
     var query by remember { mutableStateOf(template.initialSearchText.orEmpty()) }
     val delegate = template.searchCallbackDelegate
+    // An app that opens on results ("navigate to Starbucks") asks for the keyboard to stay down,
+    // so the results aren't hidden under it. Tapping the field brings it up.
+    var typing by remember { mutableStateOf(template.isShowKeyboardByDefault) }
 
     ContentSurface(modifier) {
         // Back button and field share a row: on a 480px screen the keyboard and the results
@@ -251,7 +255,7 @@ private fun SearchContent(template: SearchTemplate, modifier: Modifier) {
             SearchField(
                 query,
                 template.searchHint.orEmpty(),
-                Modifier.weight(1f),
+                Modifier.weight(1f).clickable { typing = true },
                 onClear = {
                     query = ""
                     delegate.textChanged("")
@@ -265,14 +269,17 @@ private fun SearchContent(template: SearchTemplate, modifier: Modifier) {
             else ItemListColumn(template.itemList, modifier = Modifier.fillMaxSize())
         }
 
-        CarKeyboard(
-            text = query,
-            onTextChange = {
-                query = it
-                delegate.textChanged(it)
-            },
-            onSubmit = { delegate.submitted(query) },
-        )
+        if (typing) {
+            CarKeyboard(
+                text = query,
+                onTextChange = {
+                    query = it
+                    delegate.textChanged(it)
+                },
+                onSubmit = { delegate.submitted(query) },
+                onDismiss = { typing = false },
+            )
+        }
     }
 }
 
