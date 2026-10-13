@@ -36,6 +36,8 @@ class GearslipRunner(
     private val identityProvider: () -> CertProvider.Identity,
     private val projection: Projection? = null,
     private val vehicleProfileFor: (ServiceDiscovery.HeadUnitInfo) -> VehicleProfile? = { null },
+    /** Over Wi-Fi rather than USB: the video is sent smaller so the link keeps up. */
+    private val wireless: Boolean = false,
 ) {
     private val log = GearslipLog.tagged("PROTO")
 
@@ -943,8 +945,10 @@ class GearslipRunner(
         videoSource = VideoSource(
             width = width,
             height = height,
-            frameRate = if (config.frameRate == 1) 60 else 30,
+            // 60fps only over a cable: over Wi-Fi it doubles the data for little the driver sees.
+            frameRate = if (config.frameRate == 1 && !wireless) 60 else 30,
             mode = if (useProjection) VideoSource.Mode.SURFACE else VideoSource.Mode.TEST_CARD,
+            wireless = wireless,
             onCodecConfig = { csd ->
                 lastCodecConfig = csd
                 send(MSG_MEDIA_CODEC_CONFIG, csd, encrypted = true, channel = videoChannelId)

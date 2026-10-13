@@ -23,6 +23,8 @@ class VideoSource(
     private val height: Int,
     private val frameRate: Int,
     private val mode: Mode = Mode.TEST_CARD,
+    /** Over Wi-Fi: a fraction of the cable bitrate, so the link keeps up and sound isn't starved. */
+    private val wireless: Boolean = false,
     private val onCodecConfig: (ByteArray) -> Unit,
     private val onFrame: (data: ByteArray, presentationTimeUs: Long, keyFrame: Boolean) -> Unit,
 ) {
@@ -46,7 +48,9 @@ class VideoSource(
 
     fun start() {
         val level = levelFor(width, height, frameRate)
-        val bitRate = defaultBitRate(width, height, frameRate, level)
+        val bitRate = defaultBitRate(width, height, frameRate, level).let {
+            if (wireless) (it * WIRELESS_SHARE).toInt().coerceAtMost(WIRELESS_MAX_BIT_RATE) else it
+        }
         fun format(tuned: Boolean) = MediaFormat.createVideoFormat(MIME, width, height).apply {
             setInteger(
                 MediaFormat.KEY_COLOR_FORMAT,
@@ -99,7 +103,7 @@ class VideoSource(
         codec = encoder
         running = true
 
-        log.i("encoder started: ${width}x$height @ ${frameRate}fps, ${bitRate / 1000} kbps, H.264 Baseline level ${level.label}, mode=$mode")
+        log.i("encoder started: ${width}x$height @ ${frameRate}fps, ${bitRate / 1000} kbps${if (wireless) " (wireless)" else ""}, H.264 Baseline level ${level.label}, mode=$mode")
 
         worker = Thread {
             runCatching { pump(encoder) }
@@ -258,6 +262,14 @@ class VideoSource(
             val rate = if (frameRate > 30) 1.5 else 1.0
             return (BASE_BIT_RATE * size * rate).toInt().coerceAtMost(minOf(level.maxBitRate, MAX_BIT_RATE))
         }
+        /**
+         * A car's Wi-Fi is shared, noisy and far slower than its nominal rate, and the sound rides
+         * the same link behind the video. Real Android Auto sends a few Mbps wirelessly; at the
+         * cable rate (15-20 Mbps for 720p) a laptop hotspot fell seconds behind and the music
+         * cut in and out. 720p30 comes out near 5.4 Mbps.
+         */
+        const val WIRELESS_SHARE = 0.35
+        const val WIRELESS_MAX_BIT_RATE = 8_000_000
         const val I_FRAME_INTERVAL_S = 5
         private const val REPEAT_AFTER_US = 100_000L
 

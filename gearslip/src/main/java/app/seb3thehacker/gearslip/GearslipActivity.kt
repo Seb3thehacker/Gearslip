@@ -367,6 +367,7 @@ class GearslipActivity : ComponentActivity(), Projection {
             identityProvider = { CertProvider.load(this) },
             projection = this,
             vehicleProfileFor = { info -> VehicleProfiles.find(VehicleProfiles.load(this), info) },
+            wireless = true,
         )
         this.runner = runner
         worker = Thread { runner.run() }.apply { name = "gearslip"; start() }
