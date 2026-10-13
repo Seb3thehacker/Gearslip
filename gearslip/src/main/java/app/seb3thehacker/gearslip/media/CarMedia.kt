@@ -433,6 +433,12 @@ class CarMedia(private val context: Context) {
         val controls = controller?.transportControls ?: return
         if (_now.value.playing) controls.pause() else controls.play()
     }
+    /**
+     * Pauses whatever the app thinks it's doing. Voice pauses the music to listen, so by the time
+     * "pause" is heard the app already looks stopped; a toggle did nothing and the song came back
+     * as soon as the microphone let go. A real pause tells the app to stay stopped.
+     */
+    fun pause() = controller?.transportControls?.pause()
     fun next() = controller?.transportControls?.skipToNext()
     fun previous() = controller?.transportControls?.skipToPrevious()
     fun seek(ms: Long) = controller?.transportControls?.seekTo(ms)

@@ -2,6 +2,7 @@ package app.seb3thehacker.gearslip.car
 
 import android.content.Context
 import app.seb3thehacker.gearslip.media.CarMedia
+import app.seb3thehacker.gearslip.speech.VoiceFocus
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
@@ -215,7 +216,8 @@ object AssistantCommands {
         val media = CarServices.media
         return when {
             "pause" in heard || heard.startsWith("stop") || heard == "quiet" || heard == "shut up" -> {
-                if (media.now.value.playing) media.togglePlay()
+                media.pause()
+                VoiceFocus.afterRelease { media.pause() }
                 "Paused."
             }
             "resume" in heard || "unpause" in heard || heard in RESUME_PHRASES ||
