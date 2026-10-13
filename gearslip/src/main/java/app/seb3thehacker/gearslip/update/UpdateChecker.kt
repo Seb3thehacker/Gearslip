@@ -409,9 +409,22 @@ object UpdateChecker {
         return release.takeIf { isNewer(it.version, BuildConfig.VERSION_NAME) }
     }
 
-    /** "0.2.00-alpha" beats "0.1.10-alpha": the numbers before the dash compare one by one. */
+    /**
+     * "0.2.00-alpha" beats "0.1.10-alpha": the numbers before the dash compare one by one. With the
+     * same numbers, a plain release beats a beta, and a beta beats an alpha, so "0.3.0" reaches
+     * someone on "0.3.0-beta".
+     */
     internal fun isNewer(candidate: String, installed: String): Boolean {
         fun parts(v: String) = v.removePrefix("v").substringBefore('-').split('.').map { it.toIntOrNull() ?: 0 }
+        fun stage(v: String): Int {
+            val tag = v.substringAfter('-', "").lowercase()
+            return when {
+                tag.isEmpty() -> 3
+                "beta" in tag -> 2
+                "alpha" in tag -> 1
+                else -> 0
+            }
+        }
         val a = parts(candidate)
         val b = parts(installed)
         for (i in 0 until maxOf(a.size, b.size)) {
@@ -419,6 +432,6 @@ object UpdateChecker {
             val y = b.getOrElse(i) { 0 }
             if (x != y) return x > y
         }
-        return false
+        return stage(candidate) > stage(installed)
     }
 }
