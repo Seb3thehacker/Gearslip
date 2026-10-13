@@ -256,3 +256,44 @@ internal fun WorkedCard(car: String, onSeeWhatsSent: () -> Unit, modifier: Modif
         }
     }
 }
+
+/**
+ * Usage notes on Home, one row with one action either way. While they're off, the row is the
+ * switch, so opting in is a single tap. Once they're on, it shrinks to a quiet line that opens
+ * Settings at its usage notes section, so a driver already sharing isn't pitched again.
+ */
+@Composable
+internal fun UsageNotesHomeCard(onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var on by remember { mutableStateOf(UsageStats.enabled(context)) }
+
+    SettingsCard(modifier) {
+        if (on) {
+            SettingsRow(
+                "Sharing usage notes",
+                Modifier.clickable(onClick = onOpen),
+                subtitle = buildNote(),
+                icon = Icons.Filled.Check,
+                trailing = {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                },
+            )
+        } else {
+            SettingsRow(
+                USAGE_STATS_TITLE,
+                Modifier.toggleable(false, role = Role.Switch) {
+                    UsageStats.set(context, true, UsageStats.choices(context))
+                    on = true
+                },
+                subtitle = buildNote() ?: ("A short note after each drive tells the next driver " +
+                    "whether their car works. No name, account, or location"),
+                icon = Icons.Filled.Send,
+                trailing = { Switch(checked = false, onCheckedChange = null) },
+            )
+        }
+    }
+}

@@ -84,6 +84,8 @@ object WirelessLink {
     @Volatile private var worker: Thread? = null
     /** Set when Android drops the car's network mid-try, so the rest don't bind to a dead one. */
     @Volatile private var lostNetwork: Network? = null
+    /** Bumped on each Wi-Fi join and on stop, so an older run of TCP tries ends instead of racing the new one. */
+    @Volatile private var tcpRun = 0
     private val writeLock = Any()
 
     /** Paired Bluetooth devices, cars or not: the driver picks theirs. Needs BLUETOOTH_CONNECT. */
@@ -112,6 +114,7 @@ object WirelessLink {
 
     /** Closes the Bluetooth channel, the socket and the Wi-Fi request. Safe to call any time. */
     fun stop(context: Context) {
+        tcpRun++
         worker?.interrupt()
         worker = null
         runCatching { listener?.close() }
@@ -303,7 +306,8 @@ object WirelessLink {
                     send(output, MSG_CONNECTION_STATUS, Protobuf.varintField(1, STATUS_SUCCESS))
                     log.i("-> StartResponse (phone at $phoneIp), ConnectionStatus: success")
                 }.onFailure { log.w("Bluetooth: couldn't report the Wi-Fi join (${it.message})") }
-                Thread({ connectTcp(context, output, name, net, ip, port) }, "gearslip-wireless-tcp").start()
+                val run = ++tcpRun
+                Thread({ connectTcp(context, output, name, net, ip, port, run) }, "gearslip-wireless-tcp").start()
             }
 
             override fun onUnavailable() {
@@ -394,11 +398,15 @@ object WirelessLink {
         }
     }
 
-    private fun connectTcp(context: Context, output: OutputStream, name: String, net: Network, ip: String, port: Int) {
+    private fun connectTcp(context: Context, output: OutputStream, name: String, net: Network, ip: String, port: Int, run: Int) {
         SessionStatus.connecting("Wi-Fi: reaching $name")
         lostNetwork = null
         var last: Exception? = null
         repeat(TCP_TRIES) { attempt ->
+            if (run != tcpRun) {
+                log.i("TCP: stopping the tries on the old network - the car started over")
+                return
+            }
             try {
                 // A network Android has dropped refuses every bind (EPERM). If the driver joined the
                 // car's Wi-Fi by hand, the phone's ordinary route reaches it, so use that instead.
