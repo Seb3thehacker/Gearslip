@@ -37,6 +37,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
@@ -68,6 +72,31 @@ internal val USAGE_STATS_INTRO: AnnotatedString = buildAnnotatedString {
     append(INTRO_START)
     withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(INTRO_PRIVACY) }
     append(INTRO_END)
+}
+
+/**
+ * The setup guide's version of [USAGE_STATS_INTRO]: what the notes are and why, in three
+ * sentences. The full text is one tap away in [UsageStatsReadMore].
+ */
+internal val USAGE_STATS_SHORT: AnnotatedString = buildAnnotatedString {
+    append("Gearslip can send a short note after each drive: its version and the car details you pick below. ")
+    append("The notes show which cars work and where the others fail. ")
+    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("No name, account, or location goes with them.") }
+}
+
+/** "Read more", opening the whole pitch and privacy promise in a dialog. */
+@Composable
+internal fun UsageStatsReadMore() {
+    var open by remember { mutableStateOf(false) }
+    TextButton(onClick = { open = true }, contentPadding = PaddingValues(0.dp)) { Text("Read more") }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            title = { Text("About usage notes") },
+            text = { Text(USAGE_STATS_INTRO, modifier = Modifier.verticalScroll(rememberScrollState())) },
+            confirmButton = { TextButton(onClick = { open = false }) { Text("Close") } },
+        )
+    }
 }
 
 /** The usage notes card for the setup guide: the same rows Settings shows. */
