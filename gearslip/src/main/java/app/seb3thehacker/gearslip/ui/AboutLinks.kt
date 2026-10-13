@@ -39,9 +39,9 @@ internal fun AboutLinkRows() {
         )
     }
     SettingsRow(
-        "Join the discussion on Matrix",
+        "Join the chat on Matrix",
         Modifier.clickable { GearslipLinks.open(context, GearslipLinks.MATRIX) },
-        subtitle = "Questions, ideas, or a car to report",
+        subtitle = "Talk with other drivers about cars, apps, and Gearslip",
         icon = Icons.AutoMirrored.Filled.Send,
         trailing = arrow,
     )
