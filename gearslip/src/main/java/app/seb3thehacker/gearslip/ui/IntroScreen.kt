@@ -190,8 +190,8 @@ fun IntroScreen(onDone: () -> Unit) {
                 outlined = true,
             ) { ShieldIcon(c.onSecondaryC, c.secondaryC) }
             IntroStep.THANKS -> BadgeStep(c, ::cq, ::cqSp, c.tertiaryC, "Thank you.",
-                "To everyone sending usage notes: they show me which cars Gearslip works in and which " +
-                    "ones still fail, so I know what to fix next. Every note helps.", step) { HeartIcon(c.onTertiaryC) }
+                "Thanks to your usage notes, Gearslip is confirmed to work in cars newer than 2020. " +
+                    "Each note shows which cars work and which still fail, so I know what to fix next.", step) { HeartIcon(c.onTertiaryC) }
             IntroStep.CHAT -> BadgeStep(c, ::cq, ::cqSp, c.primaryC, "Come say hi.",
                 "Gearslip has a chat room on Matrix. Talk with other drivers about cars, apps, and " +
                     "where Gearslip is headed.", step,
