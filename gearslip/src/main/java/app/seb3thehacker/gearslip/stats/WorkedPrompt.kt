@@ -8,8 +8,8 @@ import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
 
 /**
- * The one-time "Gearslip worked with your car. Share that?" ask, for drivers who don't share
- * usage notes. It comes after the first drive that worked, when a driver is happiest to help, as
+ * The one-time "Gearslip worked with your car. Share that?" ask, for drivers who never answered
+ * the usage notes question in setup, either way. It comes after the first drive that worked, when a driver is happiest to help, as
  * a card on Home. Answering it clears it, and it never comes back.
  *
  * Saying yes turns on the same usage notes switch as Settings, and that drive's car goes in the
@@ -30,7 +30,7 @@ object WorkedPrompt {
     fun pending(context: Context): StateFlow<String?> {
         if (!loaded) {
             loaded = true
-            flow.value = saved(context)?.let(::carName)
+            flow.value = saved(context)?.takeUnless { UsageStats.asked(context) }?.let(::carName)
         }
         return flow
     }
@@ -38,7 +38,8 @@ object WorkedPrompt {
     /** A drive that reached the car's screen ended cleanly. Asks, if it's never asked before. */
     fun onDriveWorked(context: Context, info: ServiceDiscovery.HeadUnitInfo?, protocol: String, screen: String, dpi: Int) {
         val p = prefs(context)
-        if (UsageStats.enabled(context) || p.getBoolean(KEY_DONE, false) || p.contains(KEY_CAR)) return
+        // Asked once only: a driver who answered in setup already said yes or no.
+        if (UsageStats.asked(context) || p.getBoolean(KEY_DONE, false) || p.contains(KEY_CAR)) return
         val car = JSONObject()
             .put("name", info?.headUnitName.orEmpty())
             .put("car", info?.carModel.orEmpty())
