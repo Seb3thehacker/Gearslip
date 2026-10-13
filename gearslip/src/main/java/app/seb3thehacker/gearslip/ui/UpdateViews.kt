@@ -10,14 +10,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Build
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -27,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
@@ -101,68 +105,130 @@ fun UpdateCard() {
     Spacer(Modifier.height(16.dp))
 }
 
-/** The Settings row: checks on tap, and carries on to download and install once something is found. */
+/** What the update check found, in a line. */
+private fun statusLine(state: State): String = when (state) {
+    State.Idle -> if (BuildConfig.DEBUG) "Dev builds check only when you tap Check now" else "Gearslip checks once a day"
+    State.Checking -> "Checking…"
+    State.UpToDate -> "You have the latest version"
+    is State.Available -> "Version ${state.release.version} is out"
+    is State.Downloading -> "Downloading… ${(state.fraction * 100).toInt()}%"
+    is State.Ready -> if (UpdateChecker.carConnected) UNPLUG_FIRST else "Version ${state.release.version} is ready to install"
+    is State.Failed -> state.message
+}
+
+private val CHANNELS = listOf(
+    Triple(UpdateChecker.Channel.STABLE, "Stable", "Finished releases only"),
+    Triple(UpdateChecker.Channel.BETA, "Beta", "Test versions that are nearly done"),
+    Triple(UpdateChecker.Channel.ALPHA, "Alpha", "Every test version, first. Expect bugs"),
+)
+
+/** The one Settings row for updates. Checking, the channel and automatic checks all sit behind it. */
 @Composable
 internal fun UpdateRow() {
     val context = LocalContext.current
     val state by UpdateChecker.state.collectAsStateWithLifecycle()
     SessionStatus.state.collectAsStateWithLifecycle().value
-    val subtitle = when (val s = state) {
-        State.Idle -> if (BuildConfig.DEBUG) "Dev builds check only when you tap" else "Gearslip checks once a day"
-        State.Checking -> "Checking…"
-        State.UpToDate -> "You have the latest version"
-        is State.Available -> "Version ${s.release.version} is out. Tap to download."
-        is State.Downloading -> "Downloading… ${(s.fraction * 100).toInt()}%"
-        is State.Ready -> if (UpdateChecker.carConnected) UNPLUG_FIRST else "Tap to install version ${s.release.version}"
-        is State.Failed -> s.message
-    }
+    var channel by remember { mutableStateOf(UpdateChecker.channel(context)) }
+    var open by remember { mutableStateOf(false) }
+    val channelName = CHANNELS.first { it.first == channel }.second
     SettingsRow(
-        "Check for updates",
-        Modifier.clickable {
-            when (val s = state) {
-                is State.Available -> UpdateChecker.download(context, s.release)
-                is State.Ready -> UpdateChecker.install(context)
-                is State.Failed -> s.release?.let { UpdateChecker.download(context, it) } ?: UpdateChecker.check(context)
-                else -> UpdateChecker.check(context)
+        "Updates",
+        Modifier.clickable { open = true },
+        subtitle = "$channelName · ${statusLine(state)}",
+        icon = Icons.Filled.CheckCircle,
+        trailing = {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        },
+    )
+    if (open) {
+        UpdateDialog(
+            state = state,
+            channel = channel,
+            onChannel = {
+                channel = it
+                UpdateChecker.setChannel(context, it)
+            },
+            onDismiss = { open = false },
+        )
+    }
+}
+
+@Composable
+private fun UpdateDialog(
+    state: State,
+    channel: UpdateChecker.Channel,
+    onChannel: (UpdateChecker.Channel) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    var auto by remember { mutableStateOf(UpdateChecker.autoCheckEnabled(context)) }
+    val action: Pair<String, () -> Unit>? = when (state) {
+        State.Checking, is State.Downloading -> null
+        is State.Available -> "Download" to { UpdateChecker.download(context, state.release) }
+        is State.Ready -> if (UpdateChecker.carConnected) null else "Install" to { UpdateChecker.install(context) }
+        is State.Failed -> "Try again" to {
+            state.release?.let { UpdateChecker.download(context, it) } ?: UpdateChecker.check(context)
+        }
+        else -> "Check now" to { UpdateChecker.check(context) }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Updates") },
+        text = {
+            Column {
+                Text(
+                    "Version ${BuildConfig.VERSION_NAME}. ${statusLine(state)}.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+                CHANNELS.forEach { (value, label, description) ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .selectable(channel == value, role = Role.RadioButton) { onChannel(value) }
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = channel == value, onClick = null)
+                        Column(Modifier.padding(start = 16.dp)) {
+                            Text(label, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                description,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .toggleable(auto, role = Role.Switch) {
+                            auto = it
+                            UpdateChecker.setAutoCheckEnabled(context, it)
+                        }
+                        .padding(top = 12.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Check automatically", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            if (BuildConfig.DEBUG) "Dev builds check only when you tap Check now" else "Once a day",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = auto, onCheckedChange = null)
+                }
             }
         },
-        subtitle = subtitle,
-        icon = Icons.Filled.CheckCircle,
-    )
-}
-
-/** Whether Gearslip checks for updates on its own. */
-@Composable
-internal fun UpdateAutoRow() {
-    val context = LocalContext.current
-    var on by remember { mutableStateOf(UpdateChecker.autoCheckEnabled(context)) }
-    SettingsRow(
-        "Check automatically",
-        Modifier.toggleable(on, role = Role.Switch) {
-            on = it
-            UpdateChecker.setAutoCheckEnabled(context, it)
+        confirmButton = {
+            action?.let { (label, run) -> TextButton(onClick = run) { Text(label) } }
         },
-        subtitle = if (BuildConfig.DEBUG) "Does nothing in dev builds. They check only when you tap Check for updates"
-        else if (on) "Once a day, with a note on the car screen and the phone when one is out"
-        else "Gearslip checks only when you tap Check for updates",
-        icon = Icons.Filled.Notifications,
-        trailing = { Switch(checked = on, onCheckedChange = null) },
-    )
-}
-
-/** Whether pre-releases count as updates. */
-@Composable
-internal fun UpdateBetaRow() {
-    val context = LocalContext.current
-    var on by remember { mutableStateOf(UpdateChecker.betaEnabled(context)) }
-    SettingsRow(
-        "Beta updates",
-        Modifier.toggleable(on, role = Role.Switch) {
-            on = it
-            UpdateChecker.setBetaEnabled(context, it)
-        },
-        subtitle = "Get test versions before they're released. They may have more bugs.",
-        icon = Icons.Filled.Build,
-        trailing = { Switch(checked = on, onCheckedChange = null) },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Done") } },
     )
 }

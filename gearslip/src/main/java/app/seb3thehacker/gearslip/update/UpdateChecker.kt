@@ -32,8 +32,9 @@ import java.security.MessageDigest
 /**
  * Looks for a newer Gearslip on GitHub and installs it through Android's own installer.
  *
- * Only GitHub's "latest" release counts, which leaves out pre-releases and drafts, unless the
- * driver opted into betas: then pre-releases count too. The app checks at most once a day: when
+ * Which releases count depends on the driver's channel. Stable takes only GitHub's "latest"
+ * release, which leaves out pre-releases and drafts. Beta adds pre-releases tagged "beta", and
+ * Alpha adds every pre-release. The app checks at most once a day: when
  * it opens, and when a drive ends. With automatic checks off it never asks GitHub on its own,
  * only when the driver taps Check for updates. After a drive a new version also gets
  * a notification, once per version, since the driver is parked and the app is likely closed. The
@@ -66,7 +67,9 @@ object UpdateChecker {
     private const val KEY_FOUND = "found"
     /** Named for the notifications toggle it grew out of; it now covers every automatic check. */
     private const val KEY_AUTO = "notify"
+    /** The old on/off switch for pre-releases. On meant every pre-release, which is now Alpha. */
     private const val KEY_BETA = "beta"
+    private const val KEY_CHANNEL = "channel"
     private const val KEY_NOTIFIED = "notified_version"
     private const val KEY_CAR_NOTIFIED = "car_notified_version"
     /** Lets the car screen settle after plug-in, so the card isn't lost behind the first frames. */
@@ -94,15 +97,21 @@ object UpdateChecker {
         if (!on) NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID)
     }
 
-    /** Whether GitHub pre-releases count as updates. */
-    fun betaEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_BETA, false)
+    /** Which releases count as updates. Each channel also takes everything the one before it does. */
+    enum class Channel { STABLE, BETA, ALPHA }
+
+    fun channel(context: Context): Channel {
+        val p = prefs(context)
+        p.getString(KEY_CHANNEL, null)?.let { saved -> Channel.entries.firstOrNull { it.name == saved }?.let { return it } }
+        return if (p.getBoolean(KEY_BETA, false)) Channel.ALPHA else Channel.STABLE
+    }
 
     /**
-     * Switching channels forgets what the old one found: a beta found earlier shouldn't still be
-     * offered once betas are off. Checks again right away if automatic checks are on.
+     * Switching channels forgets what the old one found: an alpha found earlier shouldn't still be
+     * offered on Stable. Checks again right away if automatic checks are on.
      */
-    fun setBetaEnabled(context: Context, on: Boolean) {
-        prefs(context).edit().putBoolean(KEY_BETA, on).remove(KEY_FOUND).remove(KEY_CHECKED_AT).apply()
+    fun setChannel(context: Context, channel: Channel) {
+        prefs(context).edit().putString(KEY_CHANNEL, channel.name).remove(KEY_BETA).remove(KEY_FOUND).remove(KEY_CHECKED_AT).apply()
         val current = flow.value
         if (current is State.Checking || current is State.Downloading) return
         updatesDir(context).deleteRecursively()
@@ -222,7 +231,7 @@ object UpdateChecker {
         Thread({ flow.value = checkNow(app) }, "gearslip-update").start()
     }
 
-    private fun checkNow(app: Context): State = runCatching { fetchNewest(betaEnabled(app)) }.fold(
+    private fun checkNow(app: Context): State = runCatching { fetchNewest(channel(app)) }.fold(
         onSuccess = { release ->
             prefs(app).edit().putLong(KEY_CHECKED_AT, System.currentTimeMillis()).apply()
             if (release != null && isNewer(release.version, BuildConfig.VERSION_NAME)) {
@@ -288,9 +297,10 @@ object UpdateChecker {
         )
     }
 
-    /** The newest release with an APK: the "latest" one, or with [beta] the newest of any kind but drafts. */
-    private fun fetchNewest(beta: Boolean): Release? {
-        val conn = (URL(if (beta) ALL else LATEST).openConnection() as HttpURLConnection).apply {
+    /** The newest release with an APK that [channel] takes. Drafts never count. */
+    private fun fetchNewest(channel: Channel): Release? {
+        val stable = channel == Channel.STABLE
+        val conn = (URL(if (stable) LATEST else ALL).openConnection() as HttpURLConnection).apply {
             connectTimeout = 15_000
             readTimeout = 15_000
             setRequestProperty("Accept", "application/vnd.github+json")
@@ -300,10 +310,14 @@ object UpdateChecker {
             if (conn.responseCode == 404) return null // no stable release yet
             if (conn.responseCode !in 200..299) error("GitHub answered ${conn.responseCode}")
             val body = conn.inputStream.bufferedReader().use { it.readText() }
-            if (!beta) return release(JSONObject(body))
+            if (stable) return release(JSONObject(body))
             val list = org.json.JSONArray(body)
             return (0 until list.length()).map { list.getJSONObject(it) }
                 .filterNot { it.optBoolean("draft") }
+                .filter {
+                    channel == Channel.ALPHA || !it.optBoolean("prerelease") ||
+                        it.optString("tag_name").contains("beta", ignoreCase = true)
+                }
                 .mapNotNull(::release)
                 .reduceOrNull { best, next -> if (isNewer(next.version, best.version)) next else best }
         } finally {

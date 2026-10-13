@@ -178,11 +178,6 @@
             android:name=".notify.TestMessageReceiver"
             android:exported="false" />
 
-        <!-- The one-time "Gearslip worked with your car" ask: its Share and Not now buttons. -->
-        <receiver
-            android:name=".stats.WorkedPromptReceiver"
-            android:exported="false" />
-
         <service
             android:name=".mirror.MirrorService"
             android:exported="false"

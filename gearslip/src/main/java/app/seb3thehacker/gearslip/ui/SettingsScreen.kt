@@ -50,6 +50,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
@@ -77,11 +79,13 @@ fun SettingsScreen(
     atUsageNotes: Boolean = false,
 ) {
     val scroll = rememberScrollState()
-    // Opened from Home's usage notes row: usage notes is the last section, so start at the end.
+    // Opened from Home's usage notes row: start at that section.
+    var usageNotesY by remember { mutableIntStateOf(-1) }
     if (atUsageNotes) {
         LaunchedEffect(Unit) {
+            val y = snapshotFlow { usageNotesY }.first { it >= 0 }
             snapshotFlow { scroll.maxValue }.first { it > 0 && it < Int.MAX_VALUE }
-            scroll.scrollTo(scroll.maxValue)
+            scroll.scrollTo(y)
         }
     }
     Scaffold(
@@ -106,13 +110,18 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             Spacer(Modifier.height(0.dp))
-            AboutSection(onOpenWhatsNew, onReplayTutorial, onReplayIntro)
             ConnectionSection()
             CarAudioSection()
             VoiceModelSection()
             if (SHOW_RECOMMENDED_APPS) AppsSection(onOpenRecommendedApps)
+            SettingsSection(
+                "Usage notes",
+                Modifier.onGloballyPositioned { usageNotesY = it.positionInParent().y.toInt() },
+                header = USAGE_STATS_INTRO,
+            ) { UsageStatsRows() }
+            SettingsSection("Updates") { UpdateRow() }
             CertificateSection()
-            SettingsSection("Usage notes", header = USAGE_STATS_INTRO) { UsageStatsRows() }
+            AboutSection(onOpenWhatsNew, onReplayTutorial, onReplayIntro)
             Spacer(Modifier.height(16.dp))
         }
     }
@@ -125,10 +134,10 @@ private fun Arrow() = Icon(
     tint = MaterialTheme.colorScheme.onSurfaceVariant,
 )
 
-/** What's new, updates and the setup guide, one tap from the top. */
+/** What's new, the replays, and where Gearslip lives outside the app. */
 @Composable
 private fun AboutSection(onOpenWhatsNew: () -> Unit, onReplayTutorial: () -> Unit, onReplayIntro: () -> Unit) {
-    SettingsSection {
+    SettingsSection("About") {
         SettingsRow(
             "What's new",
             Modifier.clickable(onClick = onOpenWhatsNew),
@@ -137,25 +146,19 @@ private fun AboutSection(onOpenWhatsNew: () -> Unit, onReplayTutorial: () -> Uni
             trailing = { Arrow() },
         )
         SettingsDivider()
-        UpdateRow()
-        SettingsDivider()
-        UpdateAutoRow()
-        SettingsDivider()
-        UpdateBetaRow()
+        SettingsRow(
+            "Replay the ${Intro.release} intro",
+            Modifier.clickable(onClick = onReplayIntro),
+            subtitle = "What's in this release, in a few taps",
+            icon = Icons.Filled.Star,
+            trailing = { Arrow() },
+        )
         SettingsDivider()
         SettingsRow(
             "Replay the setup guide",
             Modifier.clickable(onClick = onReplayTutorial),
             subtitle = "Go through the first-run steps again",
             icon = Icons.Filled.Refresh,
-            trailing = { Arrow() },
-        )
-        SettingsDivider()
-        SettingsRow(
-            "Replay the ${Intro.release} intro",
-            Modifier.clickable(onClick = onReplayIntro),
-            subtitle = "What's in this release, in a few taps",
-            icon = Icons.Filled.Star,
             trailing = { Arrow() },
         )
         SettingsDivider()
@@ -182,26 +185,26 @@ private fun ConnectionSection() {
     }
 }
 
-/** How music reaches the car: through Gearslip over USB, or by Bluetooth as usual. */
+/** How music reaches the car: by Bluetooth as usual, or through Gearslip over USB. Same choice as setup. */
 @Composable
 private fun CarAudioSection() {
     val usb by CarSettings.pipeAudio.collectAsState()
     SettingsSection(
         "Car audio",
-        footer = "Run the command in Help once, and USB stops asking.",
+        footer = if (usb) "Run the command in Help once, and USB stops asking." else "Calls go over Bluetooth either way.",
     ) {
         SettingsRow(
-            "USB",
-            Modifier.selectable(usb, role = Role.RadioButton) { CarSettings.setPipeAudio(true) },
-            subtitle = "Sound goes through Gearslip. Android asks to share your screen each drive",
-            trailing = { RadioButton(selected = usb, onClick = null) },
+            "Bluetooth (Recommended)",
+            Modifier.selectable(!usb, role = Role.RadioButton) { CarSettings.setPipeAudio(false) },
+            subtitle = "No prompt each drive, and your map app's voice reaches the car",
+            trailing = { RadioButton(selected = !usb, onClick = null) },
         )
         SettingsDivider()
         SettingsRow(
-            "Bluetooth",
-            Modifier.selectable(!usb, role = Role.RadioButton) { CarSettings.setPipeAudio(false) },
-            subtitle = "Sound plays over the phone's Bluetooth link to the car. Android never asks",
-            trailing = { RadioButton(selected = !usb, onClick = null) },
+            "USB",
+            Modifier.selectable(usb, role = Role.RadioButton) { CarSettings.setPipeAudio(true) },
+            subtitle = "Clearer sound with no delay. Android asks to share audio once each drive",
+            trailing = { RadioButton(selected = usb, onClick = null) },
         )
     }
 }

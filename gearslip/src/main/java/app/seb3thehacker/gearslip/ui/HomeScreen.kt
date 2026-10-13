@@ -112,10 +112,6 @@ fun HomeScreen(
                         Spacer(Modifier.height(16.dp))
                         WirelessCard()
                     }
-                    if (!live) {
-                        Spacer(Modifier.height(16.dp))
-                        SupportCard()
-                    }
                 }
 
                 // Sits at the bottom, where a thumb reaches it.
