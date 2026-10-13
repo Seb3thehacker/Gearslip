@@ -98,7 +98,7 @@ class GearslipRunner(
     fun run() {
         // This thread reads the car's acks; audio waits on them, so it can't be left at the back.
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
-        SessionReport.begin()
+        SessionReport.begin(wireless)
         log.i("--- session starting ---")
         SessionStatus.connecting("Connected to the head unit")
         log.i("device=${Build.MANUFACTURER} ${Build.MODEL}  android=${Build.VERSION.RELEASE} (sdk ${Build.VERSION.SDK_INT})")

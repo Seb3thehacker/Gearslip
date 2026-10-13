@@ -156,12 +156,14 @@ object UsageStats {
         screen: String = "",
         dpi: Int = 0,
         session: JSONObject? = null,
+        link: String = "",
+        audio: String = "",
     ) {
         if (!enabled(context)) return
         val p = prefs(context)
         synchronized(carsLock) {
-            addCar(p, info, protocol, outcome, screen, dpi)
-            if (session != null && choices(context).failures) addSession(p, info, protocol, session)
+            addCar(p, info, protocol, outcome, screen, dpi, link, audio)
+            if (session != null && choices(context).failures) addSession(p, info, protocol, session, link, audio)
         }
         sendSoon(context)
     }
@@ -171,6 +173,8 @@ object UsageStats {
         info: ServiceDiscovery.HeadUnitInfo?,
         protocol: String,
         session: JSONObject,
+        link: String,
+        audio: String,
     ) {
         val sessions = runCatching { JSONArray(p.getString(KEY_SESSIONS, "[]")) }.getOrDefault(JSONArray())
         if (sessions.length() >= MAX_SESSIONS) return
@@ -179,6 +183,7 @@ object UsageStats {
             .put("car", info?.carModel.orEmpty())
             .put("year", info?.carYear.orEmpty())
             .put("protocol", protocol)
+        if (link.isNotEmpty()) session.put("link", link).put("audio", audio)
         sessions.put(session)
         // Written at once: after a crash the app is about to die, and a deferred write would be lost.
         p.edit().putString(KEY_SESSIONS, sessions.toString()).commit()
@@ -191,6 +196,8 @@ object UsageStats {
         outcome: String,
         screen: String,
         dpi: Int,
+        link: String,
+        audio: String,
     ) {
         val cars = runCatching { JSONArray(p.getString(KEY_CARS, "[]")) }.getOrDefault(JSONArray())
         val car = JSONObject()
@@ -202,6 +209,8 @@ object UsageStats {
             .put("protocol", protocol)
             .put("result", outcome)
         if (screen.isNotEmpty()) car.put("screen", screen).put("dpi", dpi)
+        // USB or wireless, and whether music went over USB or Bluetooth: settings, not the person.
+        if (link.isNotEmpty()) car.put("link", link).put("audio", audio)
         // The same car and outcome twice in a day is one fact, not two.
         val seen = (0 until cars.length()).any { cars.optJSONObject(it)?.toString() == car.toString() }
         if (!seen && cars.length() < MAX_CARS) cars.put(car)
@@ -305,6 +314,8 @@ object UsageStats {
             .put("car", "Car model")
             .put("year", "2021")
             .put("protocol", "1.5")
+            .put("link", "usb")
+            .put("audio", "bluetooth")
 
     /** Sends the note now; false when it didn't get through. */
     private fun send(context: Context): Boolean {

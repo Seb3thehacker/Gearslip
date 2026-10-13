@@ -76,8 +76,14 @@ object SessionReport {
         appCode = info?.longVersionCode ?: 0
     }
 
-    fun begin() {
+    /** How this drive reached the car, and how its music did: "usb" or "wireless", "usb" or "bluetooth". */
+    @Volatile var link = ""; private set
+    @Volatile var audioMode = ""; private set
+
+    fun begin(wireless: Boolean) {
         startedAt = System.currentTimeMillis()
+        link = if (wireless) "wireless" else "usb"
+        audioMode = if (app.seb3thehacker.gearslip.car.CarSettings.pipeAudio.value) "usb" else "bluetooth"
         category = Category.NONE
         failure = ""; protocolVersion = ""; certSource = ""; certIssuer = ""
         stage = Stage.USB; failCode = ""; failedAfter = 0
@@ -218,7 +224,7 @@ object SessionReport {
                 else -> category.label
             }
             runCatching {
-                UsageStats.recordSession(context, headUnitInfo, protocolVersion, outcome, carScreen, carDpi, sessionNote())
+                UsageStats.recordSession(context, headUnitInfo, protocolVersion, outcome, carScreen, carDpi, sessionNote(), link, audioMode)
             }
             if (outcome == "connected") runCatching {
                 app.seb3thehacker.gearslip.stats.WorkedPrompt.onDriveWorked(context, headUnitInfo, protocolVersion, carScreen, carDpi)
