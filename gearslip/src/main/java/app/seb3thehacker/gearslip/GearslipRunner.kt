@@ -5,6 +5,7 @@ import app.seb3thehacker.gearslip.audio.AudioLink
 import app.seb3thehacker.gearslip.audio.CarMic
 import app.seb3thehacker.gearslip.media.CarMediaStatus
 import app.seb3thehacker.gearslip.car.ClusterNav
+import app.seb3thehacker.gearslip.car.DirectionsVoice
 import app.seb3thehacker.gearslip.car.CarAssistant
 import app.seb3thehacker.gearslip.car.CarEnvironment
 import app.seb3thehacker.gearslip.car.CarKeys
@@ -79,6 +80,7 @@ class GearslipRunner(
     @Volatile private var clusterNav: ClusterNav? = null
     private var sensorTypes: List<Int> = emptyList()
     @Volatile private var audioLink: AudioLink? = null
+    @Volatile private var guidanceLink: AudioLink? = null
     private var audioMessagesSeen = 0
     private var touchWidth = 0
     private var touchHeight = 0
@@ -154,6 +156,8 @@ class GearslipRunner(
         videoSource = null
         audioLink?.close()
         audioLink = null
+        guidanceLink?.close()
+        guidanceLink = null
         CarSensors.clear()
         CarMic.current = null
         mediaStatus?.stop()
@@ -201,6 +205,8 @@ class GearslipRunner(
                 clusterNav?.onMessage(messageId, body)
             } else if (frame.channel == mediaStatus?.channelId) {
                 mediaStatus?.onMessage(messageId, body)
+            } else if (frame.channel == guidanceLink?.channelId) {
+                guidanceLink?.onMessage(messageId, body)
             } else if (frame.channel == CarMic.current?.channelId) {
                 CarMic.current?.onMessage(messageId, body)
             } else if (frame.channel == audioLink?.channelId) {
@@ -452,6 +458,7 @@ class GearslipRunner(
 
         openChannel(video.serviceId)
         startAudioChannel(serviceDiscoveryResponse)
+        startGuidanceChannel(serviceDiscoveryResponse)
         startSensorChannel(serviceDiscoveryResponse)
         startMicChannel(serviceDiscoveryResponse)
         startMediaStatusChannel(serviceDiscoveryResponse)
@@ -473,7 +480,7 @@ class GearslipRunner(
         }
     }
 
-    /** Media audio rides its own sink; guidance, system and telephony sinks are left closed. */
+    /** Media audio rides its own sink; spoken directions take the guidance sink, and system and telephony stay closed. */
     private fun startAudioChannel(serviceDiscoveryResponse: ByteArray) {
         val sinks = ServiceDiscovery.findAudioServices(serviceDiscoveryResponse)
         sinks.forEach { sink ->
@@ -505,6 +512,27 @@ class GearslipRunner(
         openChannel(media.serviceId)
     }
 
+    /** The car's directions channel, where [DirectionsVoice] reads out each turn. */
+    private fun startGuidanceChannel(serviceDiscoveryResponse: ByteArray) {
+        val guidance = ServiceDiscovery.findAudioServices(serviceDiscoveryResponse)
+            .filter { it.streamType == ServiceDiscovery.STREAM_GUIDANCE }
+            .firstOrNull { it.codecType == ServiceDiscovery.CODEC_PCM } ?: run {
+            log.i("no PCM directions sink - turns won't be spoken")
+            return
+        }
+        guidanceLink = AudioLink(
+            guidance,
+            sendOnChannel = { id, body -> send(id, body, encrypted = true, channel = guidance.serviceId) },
+            sendControl = { id, body -> send(id, body, encrypted = true) },
+            tag = "guidance",
+            sessionId = GUIDANCE_SESSION_ID,
+            asksFocus = false,
+            onReady = { DirectionsVoice.attach(it) },
+            onClose = { DirectionsVoice.detach(it) },
+        )
+        openChannel(guidance.serviceId)
+    }
+
     /** The car's microphone, for voice: opened now, recording only while something listens. */
     private fun startMicChannel(serviceDiscoveryResponse: ByteArray) {
         val mic = ServiceDiscovery.findMicService(serviceDiscoveryResponse) ?: run {
@@ -513,7 +541,14 @@ class GearslipRunner(
         }
         val config = mic.configs.first()
         log.i("car microphone: channel=${mic.serviceId} ${mic.codecName} ${config.sampleRate}Hz/${config.bits}bit/x${config.channels}")
-        CarMic.current = CarMic(mic) { id, body -> send(id, body, encrypted = true, channel = mic.serviceId) }
+        CarMic.current = CarMic(
+            mic,
+            sendOnChannel = { id, body -> send(id, body, encrypted = true, channel = mic.serviceId) },
+            // VoiceSessionNotification { status = 1 START, 2 END }, on the control channel.
+            voiceSession = { start ->
+                send(MSG_VOICE_SESSION_NOTIFICATION, Protobuf.varintField(1, if (start) 1L else 2L), encrypted = true)
+            },
+        )
         openChannel(mic.serviceId)
     }
 
@@ -660,8 +695,8 @@ class GearslipRunner(
      * right-hand third of the screen away entirely - taps on a right-edge button landed on
      * the middle one. The head unit maps its own panel onto our video before reporting.
      *
-     * So: inject as-is, clamped to the video bounds. The advertised touchscreen size is kept
-     * only for diagnostics.
+     * So: inject them unscaled, shifted past the cropped margin (see below) and clamped to the
+     * video. The advertised touchscreen size is kept only for diagnostics.
      */
     private fun onInputMessage(messageId: Int, body: ByteArray) {
         when (messageId) {
@@ -692,13 +727,20 @@ class GearslipRunner(
                 val action = Wire.varint(touchFields, 3)?.toInt() ?: 0
                 val pointers = Wire.allBytes(touchFields, 1)
                 if (pointers.isEmpty()) return
-                val size = videoConfigs.getOrNull(selectedConfigIndex ?: 0)?.pixelSize()
+                val config = videoConfigs.getOrNull(selectedConfigIndex ?: 0)
+                val size = config?.pixelSize()
+                // The car crops its margin off the frame and measures taps from the corner of what
+                // it shows, so they come in short by half the margin: the 2024 VW (margin 240) sent
+                // y=6, which is inside the cropped band, and the Uconnect's never passed 351 on a
+                // 480-high frame with a 130 margin. Without this every tap landed 120 px too high
+                // and the VW couldn't press past its first screen.
+                val shift = config?.marginInsets() ?: Insets.NONE
                 val points = pointers.mapIndexedNotNull { index, pointer ->
                     val fields = Wire.fields(pointer)
                     val rawX = Wire.varint(fields, 1)?.toInt() ?: return@mapIndexedNotNull null
                     val rawY = Wire.varint(fields, 2)?.toInt() ?: return@mapIndexedNotNull null
                     val id = Wire.varint(fields, 3)?.toInt() ?: index
-                    TouchPoint(id, clamp(rawX, size?.first), clamp(rawY, size?.second))
+                    TouchPoint(id, clamp(rawX + shift.left, size?.first), clamp(rawY + shift.top, size?.second))
                 }
                 if (points.isEmpty()) return
                 val actionIndex = (Wire.varint(touchFields, 2)?.toInt() ?: 0).coerceIn(0, points.size - 1)
@@ -856,13 +898,17 @@ class GearslipRunner(
     /**
      * The offered config that best fills the car's screen: the smallest whose visible width
      * reaches most of the touchscreen's, else the largest there is. Always taking the smallest
-     * put 800x480 on a 1540x720 Audi screen and stretched it. With no touchscreen size to go
-     * by, the smallest is still the safe choice.
+     * put 800x480 on a 1540x720 Audi screen and stretched it. A car that gives no touchscreen
+     * size gets the largest up to 1080p: a car only offers sizes it can show, and the 2024 VW
+     * (touchscreen 0x0) blurred 800x480 across a 1080p screen.
      */
     private fun fitToScreen(offered: List<Int>): Int? {
         val known = offered.filter { videoConfigs.getOrNull(it)?.pixelSize() != null }
         fun pixels(idx: Int) = videoConfigs[idx].pixelCount()
-        if (touchWidth <= 0) return known.minByOrNull(::pixels)
+        if (touchWidth <= 0) {
+            return known.filter { pixels(it) <= 1920 * 1080 }.maxByOrNull(::pixels)
+                ?: known.minByOrNull(::pixels)
+        }
         val wide = known.filter { (videoConfigs[it].visibleSize()?.first ?: 0) >= touchWidth * 8 / 10 }
         return wide.minByOrNull(::pixels) ?: known.maxByOrNull(::pixels)
     }
@@ -1233,6 +1279,7 @@ class GearslipRunner(
         const val MSG_PING_RESPONSE = 12
         const val MSG_BYEBYE_REQUEST = 15
         const val MSG_BYEBYE_RESPONSE = 16
+        const val MSG_VOICE_SESSION_NOTIFICATION = 17
         const val MSG_CHANNEL_OPEN_REQUEST = 7
         const val MSG_CHANNEL_OPEN_RESPONSE = 8
 
@@ -1273,6 +1320,7 @@ class GearslipRunner(
 
         const val ACK_STALL_MS = 2_000L
         const val AUDIO_TRACE_MESSAGES = 6
+        const val GUIDANCE_SESSION_ID = 1
         const val PERIODIC_KEYFRAME_MS = 5_000L
     }
 }

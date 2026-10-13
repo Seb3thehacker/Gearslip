@@ -153,6 +153,7 @@ object ServiceDiscovery {
         return null
     }
 
+    const val STREAM_GUIDANCE = 1
     const val STREAM_MEDIA = 3
     const val CODEC_PCM = 1
 

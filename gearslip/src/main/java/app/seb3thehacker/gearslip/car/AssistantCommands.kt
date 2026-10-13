@@ -2,6 +2,7 @@ package app.seb3thehacker.gearslip.car
 
 import android.content.Context
 import app.seb3thehacker.gearslip.media.CarMedia
+import app.seb3thehacker.gearslip.speech.VoiceFocus
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.Dispatchers
@@ -26,6 +27,7 @@ object AssistantCommands {
             VoiceHelp.show()
             return "Here's what you can say."
         }
+        if (heard.matches(Regex("(fuck|f\\*+) (you|off)( too)?"))) return "Fuck you too."
 
         navigateCommand(context, navigator, frame, heard)?.let { return it }
         playSearchCommand(context, navigator, heard)?.let { return it }
@@ -123,6 +125,10 @@ object AssistantCommands {
                 break
             }
         }
+        // "the nearest gas station" -> "gas station": the map app already searches around the car
+        // (see CarMotion.nearHere), and Organic Maps took "nearest" as part of the name.
+        val (place, nearby) = plainPlace(destination)
+        destination = place
         if (destination.isBlank()) return "Where to?"
 
         val chosen = chosenApp ?: when {
@@ -133,7 +139,23 @@ object AssistantCommands {
 
         CarServices.connectNav(template, frame, destination)
         navigator.home()
-        return "Navigating to $destination with ${chosen.label}."
+        return if (nearby) "Finding the nearest $destination with ${chosen.label}." else "Navigating to $destination with ${chosen.label}."
+    }
+
+    /** [destination] without "a", "the nearest", "near me" and the like, and whether any of that said "close by". */
+    private fun plainPlace(destination: String): Pair<String, Boolean> {
+        var t = destination
+        var nearby = false
+        var changed = true
+        while (changed) {
+            changed = false
+            for (lead in PLACE_LEADS) if (t.startsWith(lead)) {
+                t = t.removePrefix(lead).trim(); changed = true
+                if (lead.trim() !in ARTICLES) nearby = true
+            }
+            for (tail in PLACE_TAILS) if (t.endsWith(tail)) { t = t.removeSuffix(tail).trim(); changed = true; nearby = true }
+        }
+        return t to nearby
     }
 
     /**
@@ -194,7 +216,8 @@ object AssistantCommands {
         val media = CarServices.media
         return when {
             "pause" in heard || heard.startsWith("stop") || heard == "quiet" || heard == "shut up" -> {
-                if (media.now.value.playing) media.togglePlay()
+                media.pause()
+                VoiceFocus.afterRelease { media.pause() }
                 "Paused."
             }
             "resume" in heard || "unpause" in heard || heard in RESUME_PHRASES ||
@@ -315,7 +338,17 @@ object AssistantCommands {
         "navigate to ", "navigate me to ", "directions to ", "get directions to ", "give me directions to ",
         "take me to ", "drive to ", "drive me to ", "get me to ", "go to ", "head to ", "route to ",
         "how do i get to ", "show me the way to ", "find a route to ", "navigation to ", "get to ",
+        // Last, so "navigate to" wins: the recognizer sometimes drops the "to".
+        "navigate me ", "navigate ", "find me the nearest ", "find the nearest ", "find the closest ",
     )
+
+    private val ARTICLES = setOf("a", "an", "the", "some")
+    // Longest first, so "the nearest " goes before "the ".
+    private val PLACE_LEADS = listOf(
+        "the nearest ", "the closest ", "a nearby ", "the nearby ", "nearest ", "closest ", "nearby ",
+        "a ", "an ", "some ",
+    )
+    private val PLACE_TAILS = listOf(" near me", " nearby", " near here", " around here", " close by", " closest to me")
 
     private val PLAY_TRIGGERS = listOf("play me ", "play ", "put on ", "listen to ", "i want to hear ", "shuffle ")
 

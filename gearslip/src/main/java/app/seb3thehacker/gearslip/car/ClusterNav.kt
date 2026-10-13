@@ -60,23 +60,8 @@ class ClusterNav(
         running = false
     }
 
-    /** One turn as the car wants it, from whichever source the map app fills. */
-    private class Turn(val step: Step, val distance: Distance?, val seconds: Long?, val rerouting: Boolean)
-
-    private fun current(): Turn? {
-        val nav = CarServices.navOrNull() ?: return null
-        nav.trip.value?.let { trip ->
-            val step = trip.steps.firstOrNull() ?: return@let
-            val estimate = trip.stepTravelEstimates.firstOrNull()
-            return Turn(step, estimate?.remainingDistance, estimate?.remainingTimeSeconds?.takeIf { it >= 0 }, trip.isLoading)
-        }
-        val info = (nav.template.value as? NavigationTemplate)?.navigationInfo as? RoutingInfo ?: return null
-        val step = info.currentStep ?: return null
-        return Turn(step, info.currentDistance, null, info.isLoading)
-    }
-
     private fun tick() {
-        val turn = current()
+        val turn = NavTurn.current()
         val status = when {
             turn == null -> STATUS_INACTIVE
             turn.rerouting -> STATUS_REROUTING
@@ -114,7 +99,7 @@ class ClusterNav(
      * 7 yards), so the app's own display choice passes straight through.
      */
     private fun sendDistance(distance: Distance, seconds: Long?) {
-        val meters = toMeters(distance)
+        val meters = NavTurn.toMeters(distance)
         val key = "${distance.displayDistance}|${distance.displayUnit}|${seconds ?: -1}"
         if (key == sentDistance) return
         sentDistance = key
@@ -126,14 +111,6 @@ class ClusterNav(
                 Protobuf.varintField(4, distance.displayUnit.toLong()),
         )
     }
-
-    private fun toMeters(d: Distance): Int = (d.displayDistance * when (d.displayUnit) {
-        Distance.UNIT_KILOMETERS, Distance.UNIT_KILOMETERS_P1 -> 1000.0
-        Distance.UNIT_MILES, Distance.UNIT_MILES_P1 -> 1609.344
-        Distance.UNIT_FEET -> 0.3048
-        Distance.UNIT_YARDS -> 0.9144
-        else -> 1.0
-    }).toInt()
 
     private fun CarText?.text() = this?.toString().orEmpty()
 
@@ -192,5 +169,31 @@ class ClusterNav(
             Maneuver.TYPE_DESTINATION_RIGHT -> 19 to SIDE_RIGHT
             else -> EVENT_UNKNOWN to SIDE_UNSPECIFIED
         }
+    }
+}
+
+/** One turn as the car wants it, from whichever source the map app fills. */
+internal class NavTurn(val step: Step, val distance: Distance?, val seconds: Long?, val rerouting: Boolean) {
+    companion object {
+        /** The map app's next turn: from its trip (what clusters get), or its routing card. */
+        fun current(): NavTurn? {
+            val nav = CarServices.navOrNull() ?: return null
+            nav.trip.value?.let { trip ->
+                val step = trip.steps.firstOrNull() ?: return@let
+                val estimate = trip.stepTravelEstimates.firstOrNull()
+                return NavTurn(step, estimate?.remainingDistance, estimate?.remainingTimeSeconds?.takeIf { it >= 0 }, trip.isLoading)
+            }
+            val info = (nav.template.value as? NavigationTemplate)?.navigationInfo as? RoutingInfo ?: return null
+            val step = info.currentStep ?: return null
+            return NavTurn(step, info.currentDistance, null, info.isLoading)
+        }
+
+        fun toMeters(d: Distance): Int = (d.displayDistance * when (d.displayUnit) {
+            Distance.UNIT_KILOMETERS, Distance.UNIT_KILOMETERS_P1 -> 1000.0
+            Distance.UNIT_MILES, Distance.UNIT_MILES_P1 -> 1609.344
+            Distance.UNIT_FEET -> 0.3048
+            Distance.UNIT_YARDS -> 0.9144
+            else -> 1.0
+        }).toInt()
     }
 }

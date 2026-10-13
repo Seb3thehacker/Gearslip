@@ -19,17 +19,35 @@ import app.seb3thehacker.gearslip.GearslipLog
 object VoiceFocus {
 
     private const val RELEASE_DELAY_MS = 1_500L
+    private const val AFTER_RELEASE_MS = 300L
 
     private val main = Handler(Looper.getMainLooper())
     private var request: AudioFocusRequest? = null
     private var audio: AudioManager? = null
     private var holders = 0
+    private val afterRelease = mutableListOf<() -> Unit>()
 
     private val releaseNow = Runnable {
-        val r = request ?: return@Runnable
-        audio?.abandonAudioFocusRequest(r)
-        request = null
-        GearslipLog.i("voice: gave audio focus back")
+        request?.let { r ->
+            audio?.abandonAudioFocusRequest(r)
+            request = null
+            GearslipLog.i("voice: gave audio focus back")
+        }
+        val pending = afterRelease.toList()
+        afterRelease.clear()
+        // Just after the music app has had its focus back and acted on it.
+        if (pending.isNotEmpty()) main.postDelayed({ pending.forEach { it() } }, AFTER_RELEASE_MS)
+    }
+
+    /**
+     * Runs [action] once the music has its focus back, or now if Gearslip isn't holding it.
+     * Metrolist takes a pause sent while it's held as nothing and resumes when focus returns,
+     * so "pause" sends it again from here.
+     */
+    fun afterRelease(action: () -> Unit) {
+        main.post {
+            if (request == null && holders == 0) action() else afterRelease += action
+        }
     }
 
     /** Pauses the music until a matching [release]. Safe from any thread. */
