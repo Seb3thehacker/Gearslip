@@ -75,6 +75,17 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.runtime.CompositionLocalProvider
+import app.seb3thehacker.gearslip.car.CarSettings
+import app.seb3thehacker.gearslip.car.theme.GsButton
+import app.seb3thehacker.gearslip.car.theme.GsIconButton
+import app.seb3thehacker.gearslip.car.theme.GsThemes
+import app.seb3thehacker.gearslip.car.theme.GsTone
+import app.seb3thehacker.gearslip.car.theme.LocalGsTheme
 import app.seb3thehacker.gearslip.speech.SpeechModels
 import app.seb3thehacker.gearslip.stats.UsageStats
 import kotlin.math.PI
@@ -106,14 +117,14 @@ object Intro {
 }
 
 /** The intro's tones, taken from the phone's own Material You colours like the rest of the app. */
-private class IntroColors(
+internal class IntroColors(
     val surface: Color, val onSurface: Color, val onVariant: Color, val outline: Color,
     val primary: Color, val onPrimary: Color, val primaryC: Color, val onPrimaryC: Color,
     val tertiaryC: Color, val onTertiaryC: Color, val secondaryC: Color, val onSecondaryC: Color,
 )
 
 @Composable
-private fun introColors(): IntroColors {
+internal fun introColors(): IntroColors {
     val m = MaterialTheme.colorScheme
     return IntroColors(
         surface = m.surface, onSurface = m.onSurface, onVariant = m.onSurfaceVariant, outline = m.outline,
@@ -123,7 +134,7 @@ private fun introColors(): IntroColors {
     )
 }
 
-private enum class IntroStep { WELCOME, WIRELESS, KNOBS, VOICE, GRAPHENE, THANKS, APPS, DRIVE }
+private enum class IntroStep { WELCOME, WIRELESS, KNOBS, VOICE, GRAPHENE, THANKS, APPS, THEME, DRIVE }
 
 private val Pop = CubicBezierEasing(0.3f, 1.6f, 0.5f, 1f)
 private val Rise = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
@@ -183,6 +194,9 @@ fun IntroScreen(onDone: () -> Unit) {
             IntroStep.APPS -> BadgeStep(c, ::cq, ::cqSp, c.secondaryC, "Good company.",
                 "Free, open-source apps that work well in the car. Tap one to see it on GitHub.", step,
                 extra = { AppPicks(c, ::cq, ::cqSp, step) }) { StarIcon(c.onSecondaryC) }
+            IntroStep.THEME -> BadgeStep(c, ::cq, ::cqSp, c.tertiaryC, "Your buttons.",
+                "Pick how the car's buttons look. Change it any time in the car's settings.", step,
+                extra = { ThemePicker(c, ::cq, ::cqSp, step) }) { ButtonsIcon(c.onTertiaryC) }
             IntroStep.DRIVE -> BadgeStep(c, ::cq, ::cqSp, c.primaryC, "Let's drive.",
                 "That's ${Intro.release}. Plug in, or just get in.", step,
                 action = "Start" to finish) { CheckIcon(c.onPrimaryC) }
@@ -195,7 +209,7 @@ fun IntroScreen(onDone: () -> Unit) {
 
 /** 0 to 1 once each time [key] changes, after [delayMs]: drives the entrance of one element. */
 @Composable
-private fun entrance(key: Any, delayMs: Int, durationMs: Int = 650): Float {
+internal fun entrance(key: Any, delayMs: Int, durationMs: Int = 650): Float {
     val a = remember(key) { Animatable(0f) }
     LaunchedEffect(key) {
         delay(delayMs.toLong())
@@ -205,14 +219,14 @@ private fun entrance(key: Any, delayMs: Int, durationMs: Int = 650): Float {
 }
 
 /** Slides up and fades in, like the mockup's `up`. */
-private fun Modifier.up(p: Float, distance: Dp) = graphicsLayer {
+internal fun Modifier.up(p: Float, distance: Dp) = graphicsLayer {
     val e = Rise.transform(p)
     alpha = e
     translationY = (1 - e) * distance.toPx()
 }
 
 /** Grows in with a bounce, like the mockup's `bounce`. */
-private fun Modifier.pop(p: Float) = graphicsLayer {
+internal fun Modifier.pop(p: Float) = graphicsLayer {
     val e = Pop.transform(p)
     alpha = p.coerceAtMost(1f)
     scaleX = 0.5f + 0.5f * e
@@ -501,9 +515,79 @@ private fun AppPicks(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUni
     }
 }
 
+/**
+ * The car's button styles side by side, each drawn in its own style, and a row of real car
+ * controls below that redraws in whichever is picked. Picking saves it, so the car shows it too.
+ */
+@Composable
+private fun ThemePicker(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit, key: IntroStep) {
+    val chosenId by CarSettings.uiTheme.collectAsState()
+    val chosen = GsThemes.byId(chosenId)
+    // Flat first: it's the default.
+    val themes = listOf(GsThemes.Flat) + GsThemes.builtIn.filter { it != GsThemes.Flat }
+    Column(
+        Modifier.padding(top = cq(7f)).fillMaxWidth().up(entrance(key, 500, 700), cq(7f)),
+        verticalArrangement = Arrangement.spacedBy(cq(6f)),
+    ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(cq(3f))) {
+            themes.forEach { theme ->
+                CompositionLocalProvider(LocalGsTheme provides theme) {
+                    GsButton(
+                        onClick = { CarSettings.setUiTheme(theme.id) },
+                        modifier = Modifier.weight(1f),
+                        tone = if (theme == chosen) GsTone.Primary else GsTone.Neutral,
+                        contentPadding = PaddingValues(horizontal = cq(1f), vertical = cq(3f)),
+                    ) {
+                        Text(
+                            if (theme == chosen) "✓ ${theme.name}" else theme.name,
+                            style = TextStyle(fontSize = cqSp(4.2f), fontWeight = FontWeight.Bold),
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+        // What the car shows: the player's controls and a full-width action.
+        CompositionLocalProvider(LocalGsTheme provides chosen) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(cq(3f)),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                GsIconButton(Icons.Filled.Search, "Search", onClick = {}, size = cq(15f), iconSize = cq(7f))
+                GsIconButton(Icons.Filled.PlayArrow, "Play", onClick = {}, tone = GsTone.Primary, size = cq(15f), iconSize = cq(8f))
+                GsButton(
+                    onClick = {},
+                    modifier = Modifier.weight(1f).height(cq(15f)),
+                    tone = GsTone.Tonal,
+                ) { Text("Navigate", style = TextStyle(fontSize = cqSp(4.6f), fontWeight = FontWeight.Bold)) }
+            }
+        }
+    }
+}
+
+/** Three keys of a keypad, pressing one after another. */
+@Composable
+private fun ButtonsIcon(color: Color) {
+    val t by rememberInfiniteTransition(label = "keys").animateFloat(
+        0f, 3f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "keys",
+    )
+    Canvas(Modifier.fillMaxSize()) {
+        inIconBox {
+            listOf(6f, 19f, 32f).forEachIndexed { i, x ->
+                // Each key dips for a moment while its turn comes round.
+                val dip = (1f - kotlin.math.abs(t - i - 0.5f) * 2f).coerceIn(0f, 1f) * 4f
+                drawRoundRect(color.copy(alpha = 0.45f), Offset(x, 16f + 4f), Size(10f, 16f),
+                    androidx.compose.ui.geometry.CornerRadius(3f))
+                drawRoundRect(color, Offset(x, 16f + dip), Size(10f, 16f), androidx.compose.ui.geometry.CornerRadius(3f))
+            }
+        }
+    }
+}
+
 /** Material's scalloped "cookie": a circle whose radius waves around its edge. */
 @Composable
-private fun Cookie(color: Color, modifier: Modifier) {
+internal fun Cookie(color: Color, modifier: Modifier) {
     Canvas(modifier) {
         val unit = size.minDimension / 100f
         val path = Path()
@@ -578,7 +662,7 @@ private fun DialIcon(color: Color) {
 }
 
 @Composable
-private fun MicIcon(color: Color) {
+internal fun MicIcon(color: Color) {
     val t = rememberInfiniteTransition(label = "mic")
     val waves = (0..1).map { i ->
         t.animateFloat(
@@ -605,7 +689,7 @@ private fun MicIcon(color: Color) {
 }
 
 @Composable
-private fun StarIcon(color: Color) {
+internal fun StarIcon(color: Color) {
     val turn by rememberInfiniteTransition(label = "star").animateFloat(
         -8f, 8f, infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "star",
     )
@@ -626,7 +710,7 @@ private fun StarIcon(color: Color) {
 }
 
 @Composable
-private fun ShieldIcon(color: Color, tick: Color) {
+internal fun ShieldIcon(color: Color, tick: Color) {
     val p = entrance(IntroStep.GRAPHENE, 800, 500)
     Canvas(Modifier.fillMaxSize()) {
         inIconBox {
@@ -643,7 +727,7 @@ private fun ShieldIcon(color: Color, tick: Color) {
 }
 
 @Composable
-private fun HeartIcon(color: Color) {
+internal fun HeartIcon(color: Color) {
     val beat by rememberInfiniteTransition(label = "beat").animateFloat(
         1f, 1f,
         infiniteRepeatable(keyframes {
@@ -696,7 +780,7 @@ private fun DrawScope.drawPartialStroke(points: List<Offset>, progress: Float, c
 }
 
 @Composable
-private fun Dots(c: IntroColors, count: Int, current: Int, cq: (Float) -> Dp, modifier: Modifier) {
+internal fun Dots(c: IntroColors, count: Int, current: Int, cq: (Float) -> Dp, modifier: Modifier) {
     Row(modifier, horizontalArrangement = Arrangement.spacedBy(cq(2f))) {
         repeat(count) { i ->
             val on = i == current
