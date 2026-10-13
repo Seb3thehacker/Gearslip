@@ -1,0 +1,50 @@
+name: CodeQL
+
+# Kotlin can only be scanned while it compiles, so this builds the debug app, the same way
+# release.yml does but without a signing key. Workflow files need no build.
+on:
+  push:
+    branches: [main, experimental]
+  pull_request:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+          - language: java-kotlin
+            build-mode: manual
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - if: matrix.build-mode == 'manual'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - if: matrix.build-mode == 'manual'
+        uses: gradle/actions/setup-gradle@v4
+
+      - if: matrix.build-mode == 'manual'
+        run: ./gradlew :gearslip:assembleDebug --no-daemon
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
