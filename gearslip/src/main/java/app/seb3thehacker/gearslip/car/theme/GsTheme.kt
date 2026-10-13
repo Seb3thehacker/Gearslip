@@ -112,7 +112,7 @@ object GsThemes {
         control = ControlLook(holdMarker = HoldMarkerStyle.DOT),
     )
 
-    val default = Tactile
+    val default = Flat
     val builtIn = listOf(Tactile, Keycap, Flat)
 
     fun byId(id: String?): GsTheme = builtIn.firstOrNull { it.id == id } ?: default
