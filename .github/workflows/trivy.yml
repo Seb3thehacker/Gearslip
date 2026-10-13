@@ -1,0 +1,34 @@
+name: Security scan
+
+# Trivy looks through the repository for committed secrets and risky workflow or build
+# settings. Findings show under the Security tab, next to CodeQL's and Dependabot's.
+on:
+  push:
+    branches: [main, experimental]
+  pull_request:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+jobs:
+  trivy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy.sarif
+          severity: MEDIUM,HIGH,CRITICAL
+
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
