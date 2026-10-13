@@ -67,7 +67,7 @@ object SpeechEngine {
 
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "gearslip-speech") }
     /**
-     * Parakeet large takes seconds to load. On [worker], the first press after connecting
+     * The final model takes seconds to load. On [worker], the first press after connecting
      * waited behind it before listening at all; here it loads while the driver talks.
      */
     private val finalWorker = Executors.newSingleThreadExecutor { Thread(it, "gearslip-speech-final") }
@@ -80,7 +80,7 @@ object SpeechEngine {
     @Volatile private var loadedFinal: SpeechModels.Model? = null
 
     /**
-     * Parakeet large holds most of the ~900 MB the two models take, so it goes after a few
+     * The final model holds most of the memory the two models take, so it goes after a few
      * minutes without a command. Kroko stays: it's small, and keeps listening instant.
      */
     private val idleUnload = Runnable { unloadFinal("after ${IDLE_UNLOAD_MS / 60_000} minutes without use") }

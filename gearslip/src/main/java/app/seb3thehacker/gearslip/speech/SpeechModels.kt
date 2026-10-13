@@ -51,12 +51,12 @@ object SpeechModels {
             plainFiles = false,
         ),
         CANARY(
-            Role.FINAL, "canary-180m-en", "Canary", "In between: better than Parakeet small, quicker than large. NVIDIA NeMo, CC BY 4.0", 198,
+            Role.FINAL, "canary-180m-en", "Canary", "Recommended. Quick, and hears names and places well. NVIDIA NeMo, CC BY 4.0", 198,
             "sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8",
             "encoder.int8.onnx", "decoder.int8.onnx", "", modelType = "canary",
         ),
         PARAKEET_LARGE(
-            Role.FINAL, "parakeet-0.6b-en", "Parakeet large", "Recommended. Hears names and places best. NVIDIA NeMo, CC BY 4.0", 631,
+            Role.FINAL, "parakeet-0.6b-en", "Parakeet large", "Hears names best, but slower and three times the size. NVIDIA NeMo, CC BY 4.0", 631,
             "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
             "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", modelType = "nemo_transducer",
         ),
@@ -82,7 +82,7 @@ object SpeechModels {
     private val states = Model.entries.associateWith { MutableStateFlow<State>(State.Missing) }
     private val _selected = MutableStateFlow(Model.KROKO)
     val selected: StateFlow<Model> = _selected.asStateFlow()
-    private val _final = MutableStateFlow<Model?>(Model.PARAKEET_LARGE)
+    private val _final = MutableStateFlow<Model?>(Model.CANARY)
 
     /** The model that rereads the whole phrase at the end; null to keep the live model's words. */
     val final: StateFlow<Model?> = _final.asStateFlow()
@@ -91,7 +91,9 @@ object SpeechModels {
     fun init(context: Context) {
         val id = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_MODEL, null)
         _selected.value = Model.entries.firstOrNull { it.id == id && it.role == Role.LIVE } ?: Model.KROKO
-        val finalId = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_FINAL, Model.PARAKEET_LARGE.id)
+        // Canary is the default. A driver who never chose but already has Parakeet large keeps it.
+        val finalId = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_FINAL, null)
+            ?: if (isReady(context, Model.PARAKEET_LARGE) && !isReady(context, Model.CANARY)) Model.PARAKEET_LARGE.id else Model.CANARY.id
         _final.value = Model.entries.firstOrNull { it.id == finalId && it.role == Role.FINAL }
         Model.entries.forEach { m -> if (isReady(context, m)) states.getValue(m).value = State.Ready }
         // Models an older build offered and this one doesn't: hundreds of MB nobody can use.

@@ -402,7 +402,7 @@ private fun BadgeStep(
 private fun VoiceStep(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit, key: IntroStep) {
     val context = LocalContext.current
     remember { SpeechModels.init(context) }
-    val needed = listOf(SpeechModels.Model.KROKO, SpeechModels.Model.PARAKEET_LARGE)
+    val needed = listOf(SpeechModels.Model.KROKO, SpeechModels.Model.CANARY)
     val states = needed.map { SpeechModels.state(it).collectAsState().value }
     val ready = states.all { it == SpeechModels.State.Ready }
     val label = when {

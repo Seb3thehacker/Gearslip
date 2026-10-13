@@ -38,7 +38,7 @@ internal fun VoiceModelSection() {
     SettingsSection(title = "Voice: live words") {
         Text(
             "The voice assistant turns speech into text on this phone, and nothing you say leaves it. " +
-                "It needs two models, about 700 MB together, downloaded once. Use Wi-Fi if you can. " +
+                "It needs two models, about 270 MB together, downloaded once. " +
                 "This one writes your words as you speak.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
