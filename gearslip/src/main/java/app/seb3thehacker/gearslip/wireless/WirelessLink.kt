@@ -316,6 +316,19 @@ object WirelessLink {
                 )
             }
 
+            // Android can hold an app's traffic back on a network it has joined (battery or data
+            // limits, local-network rules); the packets are then dropped without an error.
+            override fun onBlockedStatusChanged(net: Network, blocked: Boolean) {
+                log.i("Wi-Fi: Android ${if (blocked) "BLOCKS" else "allows"} Gearslip's traffic on \"$ssid\"")
+            }
+
+            private var capsLogged = false
+            override fun onCapabilitiesChanged(net: Network, caps: NetworkCapabilities) {
+                if (capsLogged) return
+                capsLogged = true
+                log.i("Wi-Fi: \"$ssid\" capabilities $caps")
+            }
+
             override fun onLost(net: Network) {
                 lostNetwork = net
                 log.w(
@@ -344,6 +357,10 @@ object WirelessLink {
             val calls = adapter?.getProfileConnectionState(BluetoothProfile.HEADSET)
             val audio = adapter?.getProfileConnectionState(BluetoothProfile.A2DP)
             log.i("probe: Bluetooth (any device) calls ${profileState(calls)}, media audio ${profileState(audio)}")
+            log.i(
+                "probe: background data ${manager?.restrictBackgroundStatus} (1 off, 2 allowed, 3 restricted), " +
+                    "active network ${manager?.activeNetwork}, car network $net",
+            )
         }.onFailure { log.w("probe: couldn't read the link (${it.message})") }
         for (p in listOf(port, 5288, 5277, 80, 443).distinct()) {
             val result = try {
@@ -367,6 +384,16 @@ object WirelessLink {
         else -> "unknown"
     }
 
+    /** Another network the phone has with an address in the car's /24, or null. */
+    private fun mainOnCarNetwork(context: Context, ip: String, except: Network): Network? {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return null
+        val prefix = ip.substringBeforeLast('.') + "."
+        return manager.allNetworks.firstOrNull { candidate ->
+            candidate != except && manager.getLinkProperties(candidate)?.linkAddresses
+                ?.any { it.address is java.net.Inet4Address && it.address.hostAddress?.startsWith(prefix) == true } == true
+        }
+    }
+
     private fun connectTcp(context: Context, output: OutputStream, name: String, net: Network, ip: String, port: Int) {
         SessionStatus.connecting("Wi-Fi: reaching $name")
         lostNetwork = null
@@ -375,7 +402,16 @@ object WirelessLink {
             try {
                 // A network Android has dropped refuses every bind (EPERM). If the driver joined the
                 // car's Wi-Fi by hand, the phone's ordinary route reaches it, so use that instead.
-                val socket = if (lostNetwork == net) Socket() else net.socketFactory.createSocket()
+                // The phone's main Wi-Fi on the car's network wins: that is how Android Auto itself
+                // connects, and a Pixel 6 passed pings but no TCP over the side connection Android
+                // opens for Gearslip's request.
+                val main = mainOnCarNetwork(context, ip, net)
+                if (main != null && attempt == 0) log.i("TCP: the phone's main Wi-Fi is on the car's network, using it")
+                val socket = when {
+                    main != null -> main.socketFactory.createSocket()
+                    lostNetwork == net -> Socket()
+                    else -> net.socketFactory.createSocket()
+                }
                 socket.tcpNoDelay = true
                 socket.connect(InetSocketAddress(ip, port), 5_000)
                 tcp = socket
