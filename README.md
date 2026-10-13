@@ -95,10 +95,11 @@ turn them on, in setup or in Settings.
 
 - **When they go out.** When you open Gearslip, at most once a day, and after each drive.
   Nothing runs in the background.
-- **What they carry.** The Gearslip version, plus whatever you tick: the Android version
-  and whether the phone runs GrapheneOS, the phone model, whether a car connected that
-  day, and each car's head unit, model, year, screen size, and connection result.
-  Settings shows the exact note.
+- **What they carry.** The Gearslip version and which boxes you ticked, plus whatever
+  those boxes cover: the Android version and whether the phone runs GrapheneOS, the phone
+  model, whether a car connected that day, and each car's head unit, model, year, screen
+  size, and connection result. Settings shows the exact note. Untick a phone detail, and
+  the server drops the copy it kept.
 - **What they leave out.** Your name, accounts, location, contacts, messages, and
   anything you type or play.
 - **How phones are counted.** A random number counts each phone once. The server keeps
