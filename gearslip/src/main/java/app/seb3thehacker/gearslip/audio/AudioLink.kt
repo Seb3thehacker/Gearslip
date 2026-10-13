@@ -33,6 +33,7 @@ class AudioLink(
     // The Uconnect asks for 4 on its video channel; assume the same until its Config says otherwise.
     @Volatile private var maxUnacked = 4
     @Volatile private var lastAckAt = 0L
+    private var stalls = 0
     private var chunks = 0
     private var bytes = 0L
     private var dropped = 0
@@ -51,18 +52,19 @@ class AudioLink(
             GearslipLog.w("audio: the head unit refused the media audio channel (status $status)")
             return
         }
-        // AVChannelSetupRequest { required uint32 config_index = 1 }. This field is an index into
-        // the sink's own audio_configs, not a codec id - sending the codec type asks for a config
-        // the sink does not have, and it answers with a status that never reaches READY.
-        sendOnChannel(MSG_SETUP, Protobuf.varintField(1, 0L))
-        GearslipLog.i("audio: -> Setup(config_index=0) on channel ${service.serviceId}, codec ${service.codecName}")
+        // Setup { required MediaCodecType type = 1 }: the codec the car advertised for this sink
+        // (aasdk's current protos, and LIVI reads it as the codec). Gearslip used to send 0 here,
+        // read from an older proto as a config index; 0 is no codec at all, and the 2024 VW
+        // answered UNEXPECTED_MESSAGE (id 255), never acked a chunk and played nothing.
+        sendOnChannel(MSG_SETUP, Protobuf.varintField(1, service.codecType.toLong()))
+        GearslipLog.i("audio: -> Setup(codec=${service.codecName}) on channel ${service.serviceId}")
         armConfigFallback()
     }
 
     /**
-     * The 2018 Uconnect and a Dacia ULC 4.5 both answer our Setup with a two-byte message we
-     * cannot identify (id 255, no body) rather than the AVChannelSetupResponse the video channel
-     * gets, so the sink never reaches READY. [MSG_SETUP_ANSWER] takes that as the go-ahead.
+     * The 2018 Uconnect, a Dacia ULC 4.5 and the 2024 VW answered the old Setup (codec 0) with
+     * UNEXPECTED_MESSAGE (id 255, no body) rather than a Config, so the sink never reached READY.
+     * [MSG_SETUP_ANSWER] still takes that as the go-ahead, in case a car rejects the real codec too.
      *
      * Service discovery already told us everything a Config would have: the sink's rate, channels
      * and its one configuration. So for a car that answers nothing at all, wait a moment and then
@@ -200,7 +202,11 @@ class AudioLink(
                 val waited = System.currentTimeMillis() - lastAckAt
                 if (waited > STALL_MS) {
                     // A lost ack must not silence the stream for good; after a stall assume the window cleared.
-                    GearslipLog.w("audio: no ack for ${STALL_MS}ms with $inFlight in flight - reopening the window")
+                    // A car that never acks (the 2024 VW, the Bolt) hits this every chunk: say so
+                    // once, then now and then, so the rest of the log stays readable.
+                    if (stalls++ % 500 == 0) {
+                        GearslipLog.w("audio: no ack for ${STALL_MS}ms with $inFlight in flight - reopening the window ($stalls times)")
+                    }
                     inFlight = 0
                     break
                 }
