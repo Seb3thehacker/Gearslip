@@ -100,7 +100,18 @@ fun HomeScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                     StatusCard(status)
+                    // The first drive that worked asks once to share it, right under the result.
+                    val car = workedCar
+                    if (car != null && !live) {
+                        Spacer(Modifier.height(16.dp))
+                        WorkedCard(car, onSeeWhatsSent = onOpenUsageNotes)
+                    }
                     Spacer(Modifier.height(16.dp))
+                    UpdateCard()
+                }
+
+                // Sits at the bottom, where a thumb reaches it.
+                Column(Modifier.padding(vertical = 16.dp)) {
                     SettingsCard {
                         SettingsRow(
                             "What's new in ${Intro.release}",
@@ -117,19 +128,8 @@ fun HomeScreen(
                             trailing = { Arrow() },
                         )
                     }
-                    // The first drive that worked asks once to share it, right under the result.
-                    val car = workedCar
-                    if (car != null && !live) {
-                        Spacer(Modifier.height(16.dp))
-                        WorkedCard(car, onSeeWhatsSent = onOpenUsageNotes)
-                    }
-                    Spacer(Modifier.height(16.dp))
-                    UpdateCard()
-                }
-
-                // Sits at the bottom, where a thumb reaches it.
-                Column(Modifier.padding(vertical = 16.dp)) {
                     if (live) {
+                        Spacer(Modifier.height(16.dp))
                         Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth().height(56.dp)) {
                             Text("Disconnect")
                         }
