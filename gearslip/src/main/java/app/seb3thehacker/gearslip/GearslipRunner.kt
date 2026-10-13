@@ -5,6 +5,7 @@ import app.seb3thehacker.gearslip.audio.AudioLink
 import app.seb3thehacker.gearslip.audio.CarMic
 import app.seb3thehacker.gearslip.media.CarMediaStatus
 import app.seb3thehacker.gearslip.car.ClusterNav
+import app.seb3thehacker.gearslip.car.DirectionsVoice
 import app.seb3thehacker.gearslip.car.CarAssistant
 import app.seb3thehacker.gearslip.car.CarEnvironment
 import app.seb3thehacker.gearslip.car.CarKeys
@@ -79,6 +80,7 @@ class GearslipRunner(
     @Volatile private var clusterNav: ClusterNav? = null
     private var sensorTypes: List<Int> = emptyList()
     @Volatile private var audioLink: AudioLink? = null
+    @Volatile private var guidanceLink: AudioLink? = null
     private var audioMessagesSeen = 0
     private var touchWidth = 0
     private var touchHeight = 0
@@ -154,6 +156,8 @@ class GearslipRunner(
         videoSource = null
         audioLink?.close()
         audioLink = null
+        guidanceLink?.close()
+        guidanceLink = null
         CarSensors.clear()
         CarMic.current = null
         mediaStatus?.stop()
@@ -201,6 +205,8 @@ class GearslipRunner(
                 clusterNav?.onMessage(messageId, body)
             } else if (frame.channel == mediaStatus?.channelId) {
                 mediaStatus?.onMessage(messageId, body)
+            } else if (frame.channel == guidanceLink?.channelId) {
+                guidanceLink?.onMessage(messageId, body)
             } else if (frame.channel == CarMic.current?.channelId) {
                 CarMic.current?.onMessage(messageId, body)
             } else if (frame.channel == audioLink?.channelId) {
@@ -452,6 +458,7 @@ class GearslipRunner(
 
         openChannel(video.serviceId)
         startAudioChannel(serviceDiscoveryResponse)
+        startGuidanceChannel(serviceDiscoveryResponse)
         startSensorChannel(serviceDiscoveryResponse)
         startMicChannel(serviceDiscoveryResponse)
         startMediaStatusChannel(serviceDiscoveryResponse)
@@ -473,7 +480,7 @@ class GearslipRunner(
         }
     }
 
-    /** Media audio rides its own sink; guidance, system and telephony sinks are left closed. */
+    /** Media audio rides its own sink; spoken directions take the guidance sink, and system and telephony stay closed. */
     private fun startAudioChannel(serviceDiscoveryResponse: ByteArray) {
         val sinks = ServiceDiscovery.findAudioServices(serviceDiscoveryResponse)
         sinks.forEach { sink ->
@@ -503,6 +510,27 @@ class GearslipRunner(
             sendControl = { id, body -> send(id, body, encrypted = true) },
         )
         openChannel(media.serviceId)
+    }
+
+    /** The car's directions channel, where [DirectionsVoice] reads out each turn. */
+    private fun startGuidanceChannel(serviceDiscoveryResponse: ByteArray) {
+        val guidance = ServiceDiscovery.findAudioServices(serviceDiscoveryResponse)
+            .filter { it.streamType == ServiceDiscovery.STREAM_GUIDANCE }
+            .firstOrNull { it.codecType == ServiceDiscovery.CODEC_PCM } ?: run {
+            log.i("no PCM directions sink - turns won't be spoken")
+            return
+        }
+        guidanceLink = AudioLink(
+            guidance,
+            sendOnChannel = { id, body -> send(id, body, encrypted = true, channel = guidance.serviceId) },
+            sendControl = { id, body -> send(id, body, encrypted = true) },
+            tag = "guidance",
+            sessionId = GUIDANCE_SESSION_ID,
+            asksFocus = false,
+            onReady = { DirectionsVoice.attach(it) },
+            onClose = { DirectionsVoice.detach(it) },
+        )
+        openChannel(guidance.serviceId)
     }
 
     /** The car's microphone, for voice: opened now, recording only while something listens. */
@@ -1292,6 +1320,7 @@ class GearslipRunner(
 
         const val ACK_STALL_MS = 2_000L
         const val AUDIO_TRACE_MESSAGES = 6
+        const val GUIDANCE_SESSION_ID = 1
         const val PERIODIC_KEYFRAME_MS = 5_000L
     }
 }

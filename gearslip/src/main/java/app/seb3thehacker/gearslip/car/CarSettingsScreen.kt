@@ -53,6 +53,7 @@ fun CarSettingsScreen() {
     val units by CarSettings.units.collectAsState()
     val whatsNew by CarSettings.whatsNewAfterUpdates.collectAsState()
     val pipeAudio by CarSettings.pipeAudio.collectAsState()
+    val speakDirections by CarSettings.speakDirections.collectAsState()
     val autoplay by CarSettings.autoplay.collectAsState()
     val playerTitle by CarSettings.playerTitle.collectAsState()
     val theme by CarSettings.appTheme.collectAsState()
@@ -133,6 +134,18 @@ fun CarSettingsScreen() {
             "USB sends the phone's sound through Gearslip. Android asks to share your screen each " +
                 "drive, and a few apps block it. Bluetooth plays as the phone normally would, and " +
                 "Android never asks.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        ChoiceRow(
+            "Spoken directions",
+            listOf(false to "Off", true to "On"),
+            speakDirections,
+        ) { CarSettings.setSpeakDirections(it) }
+        Text(
+            "Gearslip reads each turn aloud through the car's speakers, and the music dips while it " +
+                "speaks. Turn it off if your map app's own voice already plays in the car.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
