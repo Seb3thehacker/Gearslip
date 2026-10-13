@@ -8,15 +8,13 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,11 +39,11 @@ private val WIRELESS_PERMISSIONS = buildList {
 }.toTypedArray()
 
 /**
- * Test entry point for wireless Android Auto: pick the paired car, and Gearslip connects to it
- * over Bluetooth and Wi-Fi. Automatic start comes later.
+ * Test entry point for wireless Android Auto, at the bottom of Home: pick the paired car, and
+ * Gearslip connects to it over Bluetooth and Wi-Fi. Automatic start comes later.
  */
 @Composable
-internal fun WirelessCard() {
+internal fun WirelessButton() {
     val context = LocalContext.current
     var devices by remember { mutableStateOf<List<BluetoothDevice>?>(null) }
     var denied by remember { mutableStateOf(false) }
@@ -56,18 +54,21 @@ internal fun WirelessCard() {
         if (granted()) devices = WirelessLink.pairedDevices(context) else denied = true
     }
 
-    SettingsCard {
-        SettingsRow(
-            "Connect wirelessly (test)",
-            Modifier.clickable {
-                denied = false
-                if (granted()) devices = WirelessLink.pairedDevices(context) else ask.launch(WIRELESS_PERMISSIONS)
-            },
-            subtitle = if (denied) "Gearslip needs Bluetooth and nearby Wi-Fi access for this"
-            else "Pick your car from the phone's paired devices",
-            icon = Icons.Filled.Info,
+    if (denied) {
+        Text(
+            "Gearslip needs Bluetooth and nearby Wi-Fi access for this.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp),
         )
     }
+    FilledTonalButton(
+        onClick = {
+            denied = false
+            if (granted()) devices = WirelessLink.pairedDevices(context) else ask.launch(WIRELESS_PERMISSIONS)
+        },
+        modifier = Modifier.fillMaxWidth().height(56.dp),
+    ) { Text("Connect wirelessly (test)") }
 
     devices?.let { list ->
         AlertDialog(
@@ -96,5 +97,4 @@ internal fun WirelessCard() {
             confirmButton = { TextButton(onClick = { devices = null }) { Text("Cancel") } },
         )
     }
-    Spacer(Modifier.height(16.dp))
 }

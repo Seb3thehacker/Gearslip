@@ -60,10 +60,13 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
     var screen by rememberSaveable { mutableStateOf(if (Intro.due(context)) Screen.INTRO else afterIntro) }
     // A replay from About goes back to Settings; the launch one carries on into setup.
     var introReturn by rememberSaveable { mutableStateOf(afterIntro) }
-    // Home's usage notes row opens Settings at that section rather than at the top.
+    // Home's "it worked" card opens Settings at usage notes rather than at the top.
     var settingsAtUsageNotes by rememberSaveable { mutableStateOf(false) }
     BackHandler(enabled = screen != Screen.HOME && screen != Screen.INTRO) {
-        screen = if (screen == Screen.RECOMMENDED_APPS) Screen.SETTINGS else Screen.HOME
+        screen = when (screen) {
+            Screen.RECOMMENDED_APPS, Screen.LOGS, Screen.CAR_PREVIEW, Screen.HELP -> Screen.SETTINGS
+            else -> Screen.HOME
+        }
     }
 
     // Home stays upright; every other screen turns with the phone.
@@ -101,27 +104,27 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
             when (screen) {
                 Screen.INTRO -> IntroScreen(onDone = { screen = introReturn })
                 Screen.HOME -> HomeScreen(
-                    onOpenLogs = { screen = Screen.LOGS },
                     onOpenSettings = { settingsAtUsageNotes = false; screen = Screen.SETTINGS },
-                    onOpenCarPreview = { screen = Screen.CAR_PREVIEW },
-                    onOpenHelp = { screen = Screen.HELP },
                     onOpenUsageNotes = { settingsAtUsageNotes = true; screen = Screen.SETTINGS },
                     onDisconnect = onDisconnect,
                 )
                 Screen.WHATS_NEW -> WhatsNewScreen(onBack = { screen = Screen.SETTINGS })
-                Screen.LOGS -> LogsScreen(onBack = { screen = Screen.HOME })
+                Screen.LOGS -> LogsScreen(onBack = { screen = Screen.SETTINGS })
                 Screen.SETTINGS -> SettingsScreen(
                     onBack = { screen = Screen.HOME },
                     onOpenRecommendedApps = { settingsAtUsageNotes = false; screen = Screen.RECOMMENDED_APPS },
                     onOpenWhatsNew = { settingsAtUsageNotes = false; screen = Screen.WHATS_NEW },
+                    onOpenHelp = { settingsAtUsageNotes = false; screen = Screen.HELP },
+                    onOpenCarPreview = { settingsAtUsageNotes = false; screen = Screen.CAR_PREVIEW },
+                    onOpenLogs = { settingsAtUsageNotes = false; screen = Screen.LOGS },
                     onReplayTutorial = { screen = Screen.SETUP_GUIDE },
                     onReplayIntro = { introReturn = Screen.SETTINGS; screen = Screen.INTRO },
                     atUsageNotes = settingsAtUsageNotes,
                 )
                 Screen.RECOMMENDED_APPS -> RecommendedAppsScreen(onBack = { screen = Screen.SETTINGS })
-                Screen.CAR_PREVIEW -> CarPreviewScreen(onBack = { screen = Screen.HOME })
+                Screen.CAR_PREVIEW -> CarPreviewScreen(onBack = { screen = Screen.SETTINGS })
                 Screen.HELP -> HelpScreen(
-                    onBack = { screen = Screen.HOME },
+                    onBack = { screen = Screen.SETTINGS },
                     onRequestCallScreening = onRequestCallScreening,
                 )
                 Screen.CERT_SETUP -> CertSetupScreen(

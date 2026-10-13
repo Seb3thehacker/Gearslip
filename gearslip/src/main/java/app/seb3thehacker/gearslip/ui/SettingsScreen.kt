@@ -19,7 +19,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -60,6 +64,8 @@ import androidx.compose.ui.unit.dp
 import app.seb3thehacker.gearslip.AppSettings
 import app.seb3thehacker.gearslip.BuildConfig
 import app.seb3thehacker.gearslip.CertProvider
+import app.seb3thehacker.gearslip.SessionStatus
+import app.seb3thehacker.gearslip.notify.TestMessage
 import app.seb3thehacker.gearslip.car.CarSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -74,12 +80,15 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenRecommendedApps: () -> Unit,
     onOpenWhatsNew: () -> Unit,
+    onOpenHelp: () -> Unit,
+    onOpenCarPreview: () -> Unit,
+    onOpenLogs: () -> Unit,
     onReplayTutorial: () -> Unit,
     onReplayIntro: () -> Unit,
     atUsageNotes: Boolean = false,
 ) {
     val scroll = rememberScrollState()
-    // Opened from Home's usage notes row: start at that section.
+    // Opened from Home's "it worked" card: start at usage notes.
     var usageNotesY by remember { mutableIntStateOf(-1) }
     if (atUsageNotes) {
         LaunchedEffect(Unit) {
@@ -111,6 +120,7 @@ fun SettingsScreen(
         ) {
             Spacer(Modifier.height(0.dp))
             ConnectionSection()
+            HelpSection(onOpenHelp, onOpenCarPreview, onOpenLogs)
             CarAudioSection()
             VoiceModelSection()
             if (SHOW_RECOMMENDED_APPS) AppsSection(onOpenRecommendedApps)
@@ -182,6 +192,51 @@ private fun ConnectionSection() {
             icon = Icons.Filled.Settings,
             trailing = { Switch(checked = enabled, onCheckedChange = null) },
         )
+    }
+}
+
+/** Connection help, and the tools for checking what Gearslip does. */
+@Composable
+private fun HelpSection(onOpenHelp: () -> Unit, onOpenCarPreview: () -> Unit, onOpenLogs: () -> Unit) {
+    val context = LocalContext.current
+    val status by SessionStatus.state.collectAsState()
+    val live = status.phase == SessionStatus.Phase.CONNECTING || status.phase == SessionStatus.Phase.PROJECTING
+    SettingsSection("Help and tools") {
+        SettingsRow(
+            "Connection help",
+            Modifier.clickable(onClick = onOpenHelp),
+            subtitle = "Which cars work, and what to set up first",
+            icon = Icons.Filled.Info,
+            trailing = { Arrow() },
+        )
+        // The preview draws the car screen on the phone, so it waits until no car is using it.
+        if (!live) {
+            SettingsDivider()
+            SettingsRow(
+                "Car preview",
+                Modifier.clickable(onClick = onOpenCarPreview),
+                subtitle = "See the car screen on your phone",
+                icon = Icons.Filled.PlayArrow,
+                trailing = { Arrow() },
+            )
+        }
+        SettingsDivider()
+        SettingsRow(
+            "Live logs",
+            Modifier.clickable(onClick = onOpenLogs),
+            subtitle = "What Gearslip and the car are saying to each other",
+            icon = Icons.AutoMirrored.Filled.List,
+            trailing = { Arrow() },
+        )
+        if (BuildConfig.DEBUG) {
+            SettingsDivider()
+            SettingsRow(
+                "Send a test message",
+                Modifier.clickable { TestMessage.post(context) },
+                subtitle = "Dev builds only. Posts a message notification to read on the car",
+                icon = Icons.AutoMirrored.Filled.Send,
+            )
+        }
     }
 }
 

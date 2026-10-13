@@ -47,10 +47,7 @@ import app.seb3thehacker.gearslip.stats.WorkedPrompt
 
 @Composable
 fun HomeScreen(
-    onOpenLogs: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenCarPreview: () -> Unit,
-    onOpenHelp: () -> Unit,
     onOpenUsageNotes: () -> Unit,
     onDisconnect: () -> Unit,
 ) {
@@ -108,10 +105,6 @@ fun HomeScreen(
                     }
                     Spacer(Modifier.height(16.dp))
                     UpdateCard()
-                    if (status.phase != SessionStatus.Phase.PROJECTING) {
-                        Spacer(Modifier.height(16.dp))
-                        WirelessCard()
-                    }
                 }
 
                 // Sits at the bottom, where a thumb reaches it.
@@ -120,29 +113,8 @@ fun HomeScreen(
                         Button(onClick = onDisconnect, modifier = Modifier.fillMaxWidth().height(56.dp)) {
                             Text("Disconnect")
                         }
-                        Spacer(Modifier.height(16.dp))
-                    }
-
-                    // Not while the card above is asking the same thing.
-                    if (workedCar == null || live) {
-                        UsageNotesHomeCard(onOpen = onOpenUsageNotes)
-                        Spacer(Modifier.height(16.dp))
-                    }
-
-                    Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = MaterialTheme.shapes.extraLarge) {
-                        Column {
-                            if (!live) {
-                                ActionRow(Icons.Filled.PlayArrow, "Car preview", onOpenCarPreview)
-                                RowDivider()
-                            }
-                            ActionRow(Icons.Filled.List, "Live logs", onOpenLogs)
-                            RowDivider()
-                            ActionRow(Icons.Filled.Info, "Connection help", onOpenHelp)
-                            if (BuildConfig.DEBUG) {
-                                RowDivider()
-                                ActionRow(Icons.Filled.Send, "Send a test message") { TestMessage.post(context) }
-                            }
-                        }
+                    } else {
+                        WirelessButton()
                     }
                 }
             }
@@ -150,34 +122,6 @@ fun HomeScreen(
         // Sharing just went on from the "it worked" ask: a little thanks.
         if (celebrate) ConfettiFall(onDone = WorkedPrompt::celebrated)
     }
-}
-
-@Composable
-private fun ActionRow(icon: ImageVector, label: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        Text(label, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-        Icon(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun RowDivider() {
-    HorizontalDivider(
-        modifier = Modifier.padding(horizontal = 20.dp),
-        color = MaterialTheme.colorScheme.outlineVariant,
-    )
 }
 
 @Composable
