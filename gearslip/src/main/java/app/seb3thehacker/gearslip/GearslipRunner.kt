@@ -660,8 +660,8 @@ class GearslipRunner(
      * right-hand third of the screen away entirely - taps on a right-edge button landed on
      * the middle one. The head unit maps its own panel onto our video before reporting.
      *
-     * So: inject as-is, clamped to the video bounds. The advertised touchscreen size is kept
-     * only for diagnostics.
+     * So: inject them unscaled, shifted past the cropped margin (see below) and clamped to the
+     * video. The advertised touchscreen size is kept only for diagnostics.
      */
     private fun onInputMessage(messageId: Int, body: ByteArray) {
         when (messageId) {
@@ -692,13 +692,20 @@ class GearslipRunner(
                 val action = Wire.varint(touchFields, 3)?.toInt() ?: 0
                 val pointers = Wire.allBytes(touchFields, 1)
                 if (pointers.isEmpty()) return
-                val size = videoConfigs.getOrNull(selectedConfigIndex ?: 0)?.pixelSize()
+                val config = videoConfigs.getOrNull(selectedConfigIndex ?: 0)
+                val size = config?.pixelSize()
+                // The car crops its margin off the frame and measures taps from the corner of what
+                // it shows, so they come in short by half the margin: the 2024 VW (margin 240) sent
+                // y=6, which is inside the cropped band, and the Uconnect's never passed 351 on a
+                // 480-high frame with a 130 margin. Without this every tap landed 120 px too high
+                // and the VW couldn't press past its first screen.
+                val shift = config?.marginInsets() ?: Insets.NONE
                 val points = pointers.mapIndexedNotNull { index, pointer ->
                     val fields = Wire.fields(pointer)
                     val rawX = Wire.varint(fields, 1)?.toInt() ?: return@mapIndexedNotNull null
                     val rawY = Wire.varint(fields, 2)?.toInt() ?: return@mapIndexedNotNull null
                     val id = Wire.varint(fields, 3)?.toInt() ?: index
-                    TouchPoint(id, clamp(rawX, size?.first), clamp(rawY, size?.second))
+                    TouchPoint(id, clamp(rawX + shift.left, size?.first), clamp(rawY + shift.top, size?.second))
                 }
                 if (points.isEmpty()) return
                 val actionIndex = (Wire.varint(touchFields, 2)?.toInt() ?: 0).coerceIn(0, points.size - 1)
