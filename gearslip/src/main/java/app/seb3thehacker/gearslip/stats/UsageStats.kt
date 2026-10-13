@@ -88,6 +88,9 @@ object UsageStats {
             .putBoolean("share_phone", choices.phone)
             .putBoolean("share_cars", choices.cars)
             .putBoolean("share_failures", choices.failures)
+            // The server drops details from a box once it's unticked, so the next note sends
+            // them again rather than assuming the server still has them.
+            .remove(KEY_SENT_DETAILS)
             .apply()
         // Turning it on sends nothing yet: the driver may still be ticking boxes. The first note
         // waits for [choicesClosed].
@@ -251,6 +254,14 @@ object UsageStats {
             .put("version", BuildConfig.VERSION_NAME)
             .put("code", BuildConfig.VERSION_CODE)
             .put("build", if (BuildConfig.DEBUG) "dev" else "release")
+            // Which boxes are ticked, so the server knows what this phone shares and can drop
+            // anything it kept from a box since unticked.
+            .put("shares", JSONArray().apply {
+                if (c.android) put("android")
+                if (c.phone) put("phone")
+                if (c.cars) put("cars")
+                if (c.failures) put("sessions")
+            })
         // Phone details change rarely, so they ride along only when they differ from what the
         // server last got, or once a month in case it lost them. Unticked ones are left out, and
         // the server keeps the last value it had.
