@@ -65,16 +65,21 @@ object AssistantCommands {
         return builtIn + (LauncherCache.entries ?: withContext(Dispatchers.IO) { LauncherCache.load(context) })
     }
 
-    /** Best label match: exact, then a label starting with [name], then one containing it. */
+    /**
+     * Best label match: exact, then a label starting with [name], then one containing it. Spaces
+     * and punctuation don't count, since the recognizer may hear "MapQuest" as "map quest".
+     */
     private fun <T> bestMatch(items: List<T>, name: String, label: (T) -> String): T? {
-        val n = name.removePrefix("the ").removePrefix("my ").removeSuffix(" app").trim()
+        val n = squash(name.removePrefix("the ").removePrefix("my ").removeSuffix(" app"))
         if (n.isEmpty()) return null
-        items.firstOrNull { label(it).lowercase() == n }?.let { return it }
+        items.firstOrNull { squash(label(it)) == n }?.let { return it }
         // Loose matches need a real word: "pizza in a" mustn't pick "Organic Maps" for its "a".
         if (n.length < 3) return null
-        return items.firstOrNull { label(it).lowercase().startsWith(n) }
-            ?: items.firstOrNull { label(it).lowercase().contains(n) }
+        return items.firstOrNull { squash(label(it)).startsWith(n) }
+            ?: items.firstOrNull { squash(label(it)).contains(n) }
     }
+
+    private fun squash(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
 
     /**
      * "navigate to X [with|using|on|via Y]" - Y picks the nav app by (partial) label; without it,
