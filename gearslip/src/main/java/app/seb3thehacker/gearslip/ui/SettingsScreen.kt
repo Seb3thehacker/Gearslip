@@ -131,6 +131,10 @@ fun SettingsScreen(
             ) { UsageStatsRows() }
             SettingsSection("Updates") { UpdateRow() }
             CertificateSection()
+            SettingsSection(
+                "Support Gearslip",
+                footer = "Gearslip is free, with no ads and no tracking. Donations keep it going.",
+            ) { DonateRows() }
             AboutSection(onOpenWhatsNew, onReplayTutorial, onReplayIntro)
             Spacer(Modifier.height(16.dp))
         }
