@@ -155,10 +155,9 @@ private fun hasNotificationAccess(context: Context): Boolean {
  */
 private fun usageNotesPage(context: Context) = GuidePage(
     title = "Help other drivers.",
-    explanation = USAGE_STATS_SHORT,
+    explanation = USAGE_STATS_INTRO,
     icon = { HeartIcon(it) },
     content = {
-        UsageStatsReadMore()
         UsageStatsChoices()
         DisposableEffect(Unit) {
             onDispose { if (!UsageStats.asked(context)) UsageStats.set(context, false) }

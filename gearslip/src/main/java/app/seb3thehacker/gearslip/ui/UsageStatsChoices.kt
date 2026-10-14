@@ -56,47 +56,17 @@ import app.seb3thehacker.gearslip.stats.UsageStats
 internal const val USAGE_STATS_TITLE = "Help show which cars work"
 
 private const val INTRO_START =
-    "Gearslip can't tell which cars it works in unless drivers say so. Turn this on, and Gearslip " +
-        "sends a short note when you open it and after each drive, never in the background. The " +
-        "note carries the Gearslip version and whatever you choose to share. "
+    "Turn this on, and Gearslip sends a short note when you open it and after each drive. "
 private const val INTRO_PRIVACY =
-    "It holds no name, account, or location, only a random number so your phone counts once. " +
-        "Cloudflare carries the note, and the server keeps no IP address."
+    "The note holds no name, account, or location. A random number counts your phone once, and the server keeps no IP address."
 private const val INTRO_END =
-    " Nothing helps the project more. The notes show which cars work, so the next driver knows " +
-        "before installing. When a car fails, the note says where the connection broke, which is " +
-        "often enough to fix a car no one working on Gearslip owns."
+    " The notes show which cars work and where the others fail."
 
-/** The pitch for the usage notes, with the privacy promise in bold so it isn't missed. */
+/** The pitch for the usage notes, in setup and Settings, with the privacy promise in bold so it isn't missed. */
 internal val USAGE_STATS_INTRO: AnnotatedString = buildAnnotatedString {
     append(INTRO_START)
     withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(INTRO_PRIVACY) }
     append(INTRO_END)
-}
-
-/**
- * The setup guide's version of [USAGE_STATS_INTRO]: what the notes are and why, in three
- * sentences. The full text is one tap away in [UsageStatsReadMore].
- */
-internal val USAGE_STATS_SHORT: AnnotatedString = buildAnnotatedString {
-    append("Gearslip can send a short note after each drive: its version and the details you pick below. ")
-    append("The notes show which cars work and where the others fail. ")
-    withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append("No name, account, or location goes with them.") }
-}
-
-/** "Read more", opening the whole pitch and privacy promise in a dialog. */
-@Composable
-internal fun UsageStatsReadMore() {
-    var open by remember { mutableStateOf(false) }
-    TextButton(onClick = { open = true }, contentPadding = PaddingValues(0.dp)) { Text("Read more") }
-    if (open) {
-        AlertDialog(
-            onDismissRequest = { open = false },
-            title = { Text("About usage notes") },
-            text = { Text(USAGE_STATS_INTRO, modifier = Modifier.verticalScroll(rememberScrollState())) },
-            confirmButton = { TextButton(onClick = { open = false }) { Text("Close") } },
-        )
-    }
 }
 
 /** The usage notes card for the setup guide: the same rows Settings shows. */
@@ -135,13 +105,13 @@ internal fun ColumnScope.UsageStatsRows() {
                 color = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.padding(start = 56.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
             )
-            Choice("Android version and system, such as GrapheneOS or stock Samsung", choices.android) { choices = choices.copy(android = it); save() }
+            Choice("Android version and system", choices.android) { choices = choices.copy(android = it); save() }
             Choice("Phone model", choices.phone) { choices = choices.copy(phone = it); save() }
-            Choice("Each car's head unit, model, year, and screen size, whether it connected, and how: cable or wireless, USB or Bluetooth audio", choices.cars) {
+            Choice("Each car and whether it connected", choices.cars) {
                 choices = choices.copy(cars = it)
                 save()
             }
-            Choice("How each drive went, with the car's name: how far the connection got, how long it lasted, and how it ended, crashes included", choices.failures) {
+            Choice("Each drive and how it ended", choices.failures) {
                 choices = choices.copy(failures = it)
                 save()
             }
@@ -149,7 +119,7 @@ internal fun ColumnScope.UsageStatsRows() {
             SettingsRow(
                 "What gets sent",
                 Modifier.clickable { noteOpen = !noteOpen },
-                subtitle = "Each car goes after the drive ends. The Android version and phone model go only when they change, and once a month",
+                subtitle = "Every field, exactly as it goes out",
                 icon = Icons.Filled.Info,
                 trailing = {
                     Icon(
