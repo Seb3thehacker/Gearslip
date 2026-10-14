@@ -55,6 +55,7 @@ fun CarSettingsScreen() {
     val pipeAudio by CarSettings.pipeAudio.collectAsState()
     val speakDirections by CarSettings.speakDirections.collectAsState()
     val bluetoothWarning by CarSettings.bluetoothWarning.collectAsState()
+    val locationWarning by CarSettings.locationWarning.collectAsState()
     val autoplay by CarSettings.autoplay.collectAsState()
     val playerTitle by CarSettings.playerTitle.collectAsState()
     val theme by CarSettings.appTheme.collectAsState()
@@ -145,6 +146,11 @@ fun CarSettingsScreen() {
                 bluetoothWarning,
             ) { CarSettings.setBluetoothWarning(it) }
         }
+        ChoiceRow(
+            "Warn when location is off",
+            listOf(false to "Off", true to "On"),
+            locationWarning,
+        ) { CarSettings.setLocationWarning(it) }
 
         ChoiceRow(
             "Spoken directions",
