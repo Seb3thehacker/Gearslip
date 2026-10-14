@@ -112,9 +112,12 @@ object SpeechModels {
             ?: if (isReady(context, Model.PARAKEET_LARGE) && !isReady(context, Model.CANARY)) Model.PARAKEET_LARGE.id else Model.CANARY.id
         _final.value = Model.entries.firstOrNull { it.id == finalId && it.role == Role.FINAL }
         Model.entries.forEach { m -> if (isReady(context, m)) states.getValue(m).value = State.Ready }
-        // Models an older build offered and this one doesn't: hundreds of MB nobody can use.
+        // Models an older build offered and this one doesn't: hundreds of MB nobody can use. A
+        // known model's ".partial" folder is a download that may be running right now; [download]
+        // clears its own leftovers when it starts.
         val known = Model.entries.map { it.id }.toSet()
-        File(context.filesDir, "speech").listFiles()?.filter { it.isDirectory && it.name !in known }?.forEach {
+        File(context.filesDir, "speech").listFiles()
+            ?.filter { it.isDirectory && it.name.removeSuffix(".partial") !in known }?.forEach {
             GearslipLog.i("speech: removing ${it.name}, no longer offered")
             it.deleteRecursively()
         }
