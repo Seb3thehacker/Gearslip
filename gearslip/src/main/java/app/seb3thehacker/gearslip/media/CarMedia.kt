@@ -257,10 +257,20 @@ class CarMedia(private val context: Context) {
             }
         }, null)
         browser = mb
+        GearslipLog.i("media: connecting to ${app.label}'s library")
         runCatching { mb.connect() }.onFailure {
             GearslipLog.e("media: connect threw", it)
             _phase.value = Phase.REJECTED
         }
+        // An app that never answers would leave the player spinning, and every later tap on it
+        // would only reopen that spinner. Give up on the library and drive its playback instead.
+        main.postDelayed({
+            if (browser !== mb || _phase.value != Phase.CONNECTING) return@postDelayed
+            GearslipLog.w("media: ${app.label} didn't answer in ${CONNECT_WAIT_MS / 1000} s, using its playback session")
+            runCatching { mb.disconnect() }
+            browser = null
+            attachToSession(app)
+        }, CONNECT_WAIT_MS)
     }
 
     /**
@@ -711,6 +721,7 @@ class CarMedia(private val context: Context) {
     }
 
     private companion object {
+        const val CONNECT_WAIT_MS = 8_000L
         const val SESSION_RETRIES = 6
         const val SESSION_RETRY_MS = 500L
         /** After opening a cold app, how long to wait before the first look for its session. */
