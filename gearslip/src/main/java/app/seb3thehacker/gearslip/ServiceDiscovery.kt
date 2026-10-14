@@ -160,6 +160,18 @@ object ServiceDiscovery {
      */
     class BluetoothService(val serviceId: Int, val carAddress: String, val pairingMethods: List<Int>)
 
+    /** A carmaker's own channel (service field 12), for its apps on the phone: GM's is "com.gm.vip". */
+    class VendorService(val serviceId: Int, val name: String)
+
+    fun findVendorServices(response: ByteArray): List<VendorService> =
+        Wire.allBytes(Wire.fields(response), 1).mapNotNull { channel ->
+            val service = Wire.fields(channel)
+            val id = Wire.varint(service, 1)?.toInt() ?: return@mapNotNull null
+            val fields = Wire.fields(Wire.bytes(service, 12) ?: return@mapNotNull null)
+            val name = Wire.bytes(fields, 1)?.let { String(it, Charsets.UTF_8) } ?: return@mapNotNull null
+            VendorService(id, name)
+        }
+
     fun findBluetoothService(response: ByteArray): BluetoothService? {
         for (channel in Wire.allBytes(Wire.fields(response), 1)) {
             val service = Wire.fields(channel)
@@ -178,6 +190,8 @@ object ServiceDiscovery {
     const val STREAM_GUIDANCE = 1
     const val STREAM_MEDIA = 3
     const val CODEC_PCM = 1
+    const val CODEC_AAC_LC = 2
+    const val CODEC_AAC_LC_ADTS = 4
 
     private val STREAMS = mapOf(0 to "NONE", 1 to "GUIDANCE", 2 to "SYSTEM_AUDIO", 3 to "MEDIA", 4 to "TELEPHONY")
 

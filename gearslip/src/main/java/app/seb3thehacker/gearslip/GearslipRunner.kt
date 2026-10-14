@@ -84,6 +84,7 @@ class GearslipRunner(
     private var sensorTypes: List<Int> = emptyList()
     @Volatile private var audioLink: AudioLink? = null
     @Volatile private var guidanceLink: AudioLink? = null
+    @Volatile private var vendorChannelId = -1
     private var audioMessagesSeen = 0
     private var touchWidth = 0
     private var touchHeight = 0
@@ -213,6 +214,8 @@ class GearslipRunner(
                 guidanceLink?.onMessage(messageId, body)
             } else if (frame.channel == CarBluetooth.channelId) {
                 CarBluetooth.onMessage(messageId, body)
+            } else if (frame.channel == vendorChannelId) {
+                onVendorMessage(messageId, body)
             } else if (frame.channel == CarMic.current?.channelId) {
                 CarMic.current?.onMessage(messageId, body)
             } else if (frame.channel == audioLink?.channelId) {
@@ -470,6 +473,7 @@ class GearslipRunner(
         startMediaStatusChannel(serviceDiscoveryResponse)
         startClusterNavChannel(serviceDiscoveryResponse)
         startBluetooth(serviceDiscoveryResponse)
+        startVendorChannel(serviceDiscoveryResponse)
 
         val input = ServiceDiscovery.findInputService(serviceDiscoveryResponse, video.displayId)
         if (input == null) {
@@ -504,7 +508,7 @@ class GearslipRunner(
             return
         }
         if (media.codecType != ServiceDiscovery.CODEC_PCM) {
-            log.w("the car offers no PCM media sink, only ${media.codecName}; it may play our PCM as silence")
+            log.w("the car offers no PCM media sink, only ${media.codecName}; music goes as AAC")
         }
         val first = media.configs.firstOrNull()
         SessionReport.audio(
@@ -515,6 +519,9 @@ class GearslipRunner(
             media,
             sendOnChannel = { id, body -> send(id, body, encrypted = true, channel = media.serviceId) },
             sendControl = { id, body -> send(id, body, encrypted = true) },
+            // The driver picked the radio or another source on the car: pause the phone's music
+            // as Android Auto does, instead of letting it play on to no one.
+            onTakenBack = { CarServices.pausePhoneMedia("the car switched to another source") },
         )
         openChannel(media.serviceId)
     }
@@ -571,6 +578,29 @@ class GearslipRunner(
     }
 
     /** Bluetooth pairing, for calls: the channel only opens if the driver asks to pair. */
+    /**
+     * GM's own channel ("com.gm.vip"), opened in GM cars only. Issue #18: a 2021 Bolt ends every
+     * session about 25 s in, and of the channels it offers, this is the one a Dacia that stays
+     * connected doesn't have. What GM sends on it is private, so Gearslip only opens it and logs
+     * what arrives, by message id and size.
+     */
+    private fun startVendorChannel(serviceDiscoveryResponse: ByteArray) {
+        val vendors = ServiceDiscovery.findVendorServices(serviceDiscoveryResponse)
+        vendors.forEach { log.i("vendor channel ${it.serviceId}: ${it.name}") }
+        val gm = vendors.firstOrNull { it.name.startsWith("com.gm.") } ?: return
+        vendorChannelId = gm.serviceId
+        log.i("-> ChannelOpenRequest on GM's channel ${gm.serviceId}")
+        openChannel(gm.serviceId)
+    }
+
+    private fun onVendorMessage(messageId: Int, body: ByteArray) {
+        if (messageId == MSG_CHANNEL_OPEN_RESPONSE) {
+            log.i("<- GM channel open: status=${Protobuf.readInt32Field(body, 1) ?: 0}")
+        } else {
+            log.i("<- GM channel message id=$messageId (${body.size} bytes)")
+        }
+    }
+
     private fun startBluetooth(serviceDiscoveryResponse: ByteArray) {
         val bluetooth = ServiceDiscovery.findBluetoothService(serviceDiscoveryResponse) ?: run {
             log.i("no Bluetooth service - the car can't be paired from here")

@@ -29,6 +29,8 @@ class AudioLink(
     private val asksFocus: Boolean = true,
     private val onReady: (AudioLink) -> Unit = { CarAudio.attach(it) },
     private val onClose: (AudioLink) -> Unit = { CarAudio.detach(it) },
+    /** The car took the sound back after giving it, as when the driver switches to the radio. */
+    private val onTakenBack: () -> Unit = {},
 ) : CarAudio.Link {
 
     private var configIndex = 0
@@ -46,6 +48,9 @@ class AudioLink(
     private var dropped = 0
     @Volatile private var configTimer: Thread? = null
     private val ackLock = Object()
+    /** Only for a sink that takes AAC and nothing else; PCM sinks get the capture as it is. */
+    @Volatile private var aac: AacEncoder? = null
+    private val aacSink get() = service.codecType == ServiceDiscovery.CODEC_AAC_LC || service.codecType == ServiceDiscovery.CODEC_AAC_LC_ADTS
 
     private val config get() = service.configs.getOrNull(configIndex) ?: service.configs.firstOrNull()
     override val sampleRate get() = config?.sampleRate ?: 48_000
@@ -156,9 +161,12 @@ class AudioLink(
     fun onFocus(state: Int) {
         val name = FOCUS_STATES[state] ?: "unknown($state)"
         GearslipLog.i("$tag: <- AudioFocusResponse state=$name")
+        val had = focusGranted
         focusGranted = state == FOCUS_STATE_GAIN || state == FOCUS_STATE_GAIN_TRANSIENT ||
             state == FOCUS_STATE_GAIN_MEDIA_ONLY
         if (focusGranted) startStream() else stop()
+        // A ducking request leaves the music playing; a loss means another source has the speakers.
+        if (had && (state == FOCUS_STATE_LOSS || state == FOCUS_STATE_LOSS_TRANSIENT)) onTakenBack()
     }
 
     override fun start() {
@@ -181,6 +189,12 @@ class AudioLink(
         )
         inFlight = 0
         lastAckAt = System.currentTimeMillis()
+        if (aacSink && aac == null) {
+            aac = runCatching { AacEncoder(sampleRate, channels, adts = service.codecType == ServiceDiscovery.CODEC_AAC_LC_ADTS) }
+                .onSuccess { GearslipLog.i("$tag: the car takes ${service.codecName} only - encoding to AAC") }
+                .onFailure { GearslipLog.e("$tag: couldn't start the AAC encoder", it) }
+                .getOrNull()
+        }
         started = true
         GearslipLog.i("$tag: -> Start(session=$sessionId, config=$configIndex) - streaming ${sampleRate}Hz x$channels")
     }
@@ -195,6 +209,8 @@ class AudioLink(
         }
         focusRequested = false
         focusGranted = false
+        aac?.release()
+        aac = null
         GearslipLog.i("$tag: -> Stop, AudioFocusRequest(RELEASE) after $chunks chunks / $bytes bytes")
         chunks = 0
         bytes = 0
@@ -202,6 +218,25 @@ class AudioLink(
 
     override fun write(pcm: ByteArray, size: Int) {
         if (!started) return
+        val encoder = aac
+        if (encoder == null) {
+            send(pcm.copyOf(size))
+            return
+        }
+        val frames = try {
+            encoder.encode(pcm, size)
+        } catch (e: Exception) {
+            // A codec that dies mid-drive leaves the car silent, as it was before AAC; log it once.
+            GearslipLog.e("$tag: AAC encoding failed - no more audio this drive", e)
+            aac = null
+            started = false
+            return
+        }
+        frames.forEach(::send)
+    }
+
+    /** One Data message, once the car has room for it. */
+    private fun send(payload: ByteArray) {
         // Wait for the car to catch up rather than throw the chunk away: a dropped chunk is a gap
         // the driver hears, while a short wait is soaked up by the capture buffer behind us.
         synchronized(ackLock) {
@@ -228,7 +263,7 @@ class AudioLink(
         val micros = System.nanoTime() / 1_000
         for (i in 0 until 8) timestamp[i] = ((micros shr ((7 - i) * 8)) and 0xFF).toByte()
         try {
-            sendOnChannel(MSG_DATA, timestamp + pcm.copyOf(size))
+            sendOnChannel(MSG_DATA, timestamp + payload)
         } catch (e: java.io.IOException) {
             GearslipLog.e("$tag: the link died mid-stream", e)
             started = false
@@ -236,7 +271,7 @@ class AudioLink(
         }
         synchronized(ackLock) { inFlight++ }
         chunks++
-        bytes += size
+        bytes += payload.size
         // The first chunk proves the whole path; after that, an occasional line is enough to show
         // the car is still taking audio and to catch a window that has quietly closed.
         if (chunks == 1 || chunks % CHUNK_LOG_EVERY == 0) {
@@ -272,6 +307,8 @@ class AudioLink(
         private const val FOCUS_STATE_GAIN = 1
         private const val FOCUS_STATE_GAIN_TRANSIENT = 2
         private const val FOCUS_STATE_GAIN_MEDIA_ONLY = 6
+        private const val FOCUS_STATE_LOSS = 3
+        private const val FOCUS_STATE_LOSS_TRANSIENT = 5
         private const val SESSION_ID = 2
         private const val STALL_MS = 2_000L
         private const val CHUNK_LOG_EVERY = 200 // about every four seconds

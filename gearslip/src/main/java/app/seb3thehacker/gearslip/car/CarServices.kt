@@ -221,7 +221,7 @@ object CarServices {
      * headphones are, so the apps won't pause themselves. Every playing session is paused, not
      * just the one Gearslip opened: anything the car was playing was going through the car.
      */
-    fun pausePhoneMedia() {
+    fun pausePhoneMedia(why: String = "the car left") {
         val ctx = context ?: return
         val manager = ctx.getSystemService(MediaSessionManager::class.java)
         val listener = ComponentName(ctx, GearslipNotificationListener::class.java)
@@ -237,7 +237,7 @@ object CarServices {
         }
         playing.forEach { runCatching { it.transportControls.pause() } }
         if (playing.isNotEmpty()) {
-            app.seb3thehacker.gearslip.GearslipLog.i("media: paused ${playing.joinToString { it.packageName }} as the car left")
+            app.seb3thehacker.gearslip.GearslipLog.i("media: paused ${playing.joinToString { it.packageName }}: $why")
         }
     }
 
