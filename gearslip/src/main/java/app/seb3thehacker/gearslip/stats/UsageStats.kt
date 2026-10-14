@@ -59,10 +59,10 @@ object UsageStats {
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     /**
-     * Dev builds show every switch and screen, so they can be tested, but never send anything:
-     * testing mustn't muddy the numbers.
+     * Debug builds send too, marked "debug". The server keeps those notes apart, so testing never
+     * muddies the numbers.
      */
-    val sends: Boolean get() = !BuildConfig.DEBUG && BuildConfig.STATS_URL.isNotBlank()
+    val sends: Boolean get() = BuildConfig.STATS_URL.isNotBlank()
 
     fun enabled(context: Context): Boolean = prefs(context).getBoolean(KEY_ENABLED, false)
 
@@ -262,7 +262,7 @@ object UsageStats {
             .put("id", installId(context))
             .put("version", BuildConfig.VERSION_NAME)
             .put("code", BuildConfig.VERSION_CODE)
-            .put("build", if (BuildConfig.DEBUG) "dev" else "release")
+            .put("build", if (BuildConfig.DEBUG) "debug" else "release")
             // Which boxes are ticked, so the server knows what this phone shares and can drop
             // anything it kept from a box since unticked.
             .put("shares", JSONArray().apply {

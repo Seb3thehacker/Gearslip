@@ -107,7 +107,7 @@ fun UpdateCard() {
 
 /** What the update check found, in a line. */
 private fun statusLine(state: State): String = when (state) {
-    State.Idle -> if (BuildConfig.DEBUG) "Dev builds check only when you tap Check now" else "Gearslip checks once a day"
+    State.Idle -> if (BuildConfig.DEBUG) "Debug builds check only when you tap Check now" else "Gearslip checks once a day"
     State.Checking -> "Checking…"
     State.UpToDate -> "You have the latest version"
     is State.Available -> "Version ${state.release.version} is out"
@@ -220,7 +220,7 @@ private fun UpdateDialog(
                     Column(Modifier.weight(1f)) {
                         Text("Check automatically", style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            if (BuildConfig.DEBUG) "Dev builds check only when you tap Check now" else "Once a day",
+                            if (BuildConfig.DEBUG) "Debug builds check only when you tap Check now" else "Once a day",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )

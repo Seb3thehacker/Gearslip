@@ -172,10 +172,10 @@ private fun notePreview(context: Context): String {
     return preview.toString(2) + example
 }
 
-/** Why this build sends nothing, when it doesn't; null for a normal release. */
+/** What's different about where this build's notes go; null for a normal release. */
 private fun buildNote(): String? = when {
-    BuildConfig.DEBUG -> "Dev build: nothing is ever sent"
     BuildConfig.STATS_URL.isBlank() -> "This build has no stats server, so it sends nothing"
+    BuildConfig.DEBUG -> "Debug build: notes are kept apart and never counted in the stats"
     else -> null
 }
 

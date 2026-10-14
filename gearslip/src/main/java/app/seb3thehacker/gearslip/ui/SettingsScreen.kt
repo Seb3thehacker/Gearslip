@@ -237,7 +237,7 @@ private fun HelpSection(onOpenHelp: () -> Unit, onOpenCarPreview: () -> Unit, on
             SettingsRow(
                 "Send a test message",
                 Modifier.clickable { TestMessage.post(context) },
-                subtitle = "Dev builds only. Posts a message notification to read on the car",
+                subtitle = "Debug builds only. Posts a message notification to read on the car",
                 icon = Icons.AutoMirrored.Filled.Send,
             )
         }

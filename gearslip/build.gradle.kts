@@ -58,13 +58,13 @@ android {
         release {
             signingConfig = signingConfigs.findByName("release")
         }
-        // Its own package, so a dev build installs beside the release one instead of over it.
+        // Its own package, so a debug build installs beside the release one instead of over it.
         // Signed with the release key when it's here: both builds declare the car template
         // permission, and Android refuses a second app declaring it under a different key.
         debug {
             applicationIdSuffix = ".dev"
             signingConfigs.findByName("release")?.let { signingConfig = it }
-            manifestPlaceholders["appLabel"] = "Gearslip Dev"
+            manifestPlaceholders["appLabel"] = "Gearslip Debug"
         }
     }
 

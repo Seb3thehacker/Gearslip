@@ -40,7 +40,7 @@ import java.security.MessageDigest
  * a notification, once per version, since the driver is parked and the app is likely closed. The
  * car screen shows the same news once per version, at plug-in and only while parked.
  * Nothing runs in the background otherwise, and nothing else is sent: the request is the same one
- * a browser makes for the release page. Dev builds never check on their own.
+ * a browser makes for the release page. Debug builds never check on their own.
  *
  * The APK is checked against the size and SHA-256 GitHub lists for it, and Android refuses an
  * update signed with a different key, so a bad download can't replace the app.

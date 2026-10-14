@@ -30,7 +30,7 @@ class GearslipNotificationListener : NotificationListenerService() {
     override fun onNotificationRemoved(sbn: StatusBarNotification) = CarNotifications.gone(sbn.key)
 
     private fun ingest(sbn: StatusBarNotification, quiet: Boolean) {
-        // Gearslip's own notifications are skipped, except a dev build's test message.
+        // Gearslip's own notifications are skipped, except a debug build's test message.
         if (sbn.packageName == packageName &&
             !(app.seb3thehacker.gearslip.BuildConfig.DEBUG && sbn.notification.channelId == TestMessage.CHANNEL)
         ) return

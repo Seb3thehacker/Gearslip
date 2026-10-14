@@ -265,7 +265,7 @@ fun CarUi() {
                             // something in the top-right (settings, search, a Liked Songs
                             // shortcut) and this badge used to sit right on top of it, hiding
                             // whatever the screen drew there.
-                            DevBuildBadge(Modifier.align(Alignment.BottomEnd))
+                            DebugBuildBadge(Modifier.align(Alignment.BottomEnd))
                         }
                     }
                     // The keyboard takes the nav bar's row instead of squeezing in above it -
@@ -382,7 +382,7 @@ private fun AppWontStart(app: String, onBack: () -> Unit) {
  * that matters while driving, since a debug build is slower and less tested than what ships.
  */
 @Composable
-private fun DevBuildBadge(modifier: Modifier = Modifier) {
+private fun DebugBuildBadge(modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.padding(6.dp),
         color = MaterialTheme.colorScheme.error,
@@ -390,7 +390,7 @@ private fun DevBuildBadge(modifier: Modifier = Modifier) {
         shape = MaterialTheme.shapes.small,
     ) {
         Text(
-            "DEV BUILD",
+            "DEBUG BUILD",
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),

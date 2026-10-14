@@ -13,7 +13,7 @@ import androidx.core.app.RemoteInput
 import app.seb3thehacker.gearslip.GearslipLog
 
 /**
- * Dev builds only: posts a chat message from Gearslip to itself, shaped like Signal's or
+ * Debug builds only: posts a chat message from Gearslip to itself, shaped like Signal's or
  * WhatsApp's (MessagingStyle, a Reply action, a Mark as read action), so popups and voice reply
  * can be tried without asking someone to text you. The listener lets these through only in a
  * debug build; everything else Gearslip posts is still ignored.

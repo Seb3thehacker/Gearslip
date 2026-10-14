@@ -101,7 +101,7 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
             .windowInsetsPadding(WindowInsets.statusBars)
             .consumeWindowInsets(WindowInsets.statusBars),
     ) {
-        if (BuildConfig.DEBUG && screen != Screen.CAR_PREVIEW && screen != Screen.INTRO) DevBuildBanner()
+        if (BuildConfig.DEBUG && screen != Screen.CAR_PREVIEW && screen != Screen.INTRO) DebugBuildBanner()
 
         Column(Modifier.weight(1f)) {
             when (screen) {
@@ -160,7 +160,7 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
  * never mistaken for a release one.
  */
 @Composable
-private fun DevBuildBanner() {
+private fun DebugBuildBanner() {
     Surface(
         modifier = Modifier.fillMaxWidth().height(28.dp),
         color = Color(0xFFF5C518),
@@ -168,7 +168,7 @@ private fun DevBuildBanner() {
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
-                "DEV BUILD",
+                "DEBUG BUILD",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
             )
