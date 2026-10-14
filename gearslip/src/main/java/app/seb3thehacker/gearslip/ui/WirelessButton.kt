@@ -1,6 +1,8 @@
 package app.seb3thehacker.gearslip.ui
 
 import android.Manifest
+import android.content.Intent
+import android.provider.Settings
 import android.bluetooth.BluetoothDevice
 import android.content.pm.PackageManager
 import android.os.Build
@@ -85,7 +87,7 @@ internal fun WirelessButton() {
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     if (list.isEmpty()) {
-                        Text("No paired devices. Pair the phone with the car over Bluetooth first.")
+                        Text("Your phone isn't paired with anything yet. Pair it with the car first.")
                     }
                     list.forEach { device ->
                         Text(
@@ -100,7 +102,24 @@ internal fun WirelessButton() {
                                 .padding(vertical = 14.dp),
                         )
                     }
+                    // The car has to be paired before it shows up here, and pairing happens in Android's settings.
+                    if (list.isNotEmpty()) {
+                        Text(
+                            "Car not listed? Pair it with your phone first.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
                 }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    devices = null
+                    runCatching {
+                        context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                }) { Text("Bluetooth settings") }
             },
             confirmButton = { TextButton(onClick = { devices = null }) { Text("Cancel") } },
         )
