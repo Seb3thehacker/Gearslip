@@ -240,6 +240,9 @@ class CarAppConnection(private val context: Context) {
         this.carApp = null
         appManager = null
         navigationManager = null
+        navigating = false
+        main.removeCallbacks(sendReroute)
+        reroute = null
         _panMode.value = false
         surfaceCallback = null
         component = null
@@ -313,13 +316,40 @@ class CarAppConnection(private val context: Context) {
     /**
      * Sends a fresh destination to an app that's already running, instead of tearing it down
      * and rebuilding the whole session - see [app.seb3thehacker.gearslip.car.CarServices.connectNav].
+     *
+     * An app already on a route ends it first: Organic Maps ignored a new destination mid-route
+     * and kept the old directions. The new one goes once the app says the route ended, or after
+     * [REROUTE_WAIT_MS] if it never does.
      */
     fun navigateTo(destination: String) {
+        if (carApp == null) return
+        main.removeCallbacks(sendReroute)
+        if (!navigating) {
+            reroute = null
+            sendDestination(destination)
+            return
+        }
+        reroute = destination
+        stopNavigating()
+        main.postDelayed(sendReroute, REROUTE_WAIT_MS)
+    }
+
+    private fun sendDestination(destination: String) {
         val app = carApp ?: return
         call("onNewIntent", onValue = {}) {
             app.onNewIntent(navigateIntent(destination), it)
         }
     }
+
+    /** A destination waiting for the current route to end; see [navigateTo]. */
+    private var reroute: String? = null
+    private val sendReroute = Runnable {
+        reroute?.let { reroute = null; sendDestination(it) }
+    }
+
+    /** Whether the app has said it's on a route, between navigationStarted and navigationEnded. */
+    @Volatile var navigating = false
+        private set
 
     private fun onCreated() {
         val app = carApp ?: return
@@ -609,10 +639,15 @@ class CarAppConnection(private val context: Context) {
     val trip: StateFlow<androidx.car.app.navigation.model.Trip?> = _trip.asStateFlow()
 
     private val navigationHost = object : INavigationHost.Stub() {
-        override fun navigationStarted() = GearslipLog.i("host: navigation started")
+        override fun navigationStarted() {
+            GearslipLog.i("host: navigation started")
+            navigating = true
+        }
         override fun navigationEnded() {
             GearslipLog.i("host: navigation ended")
+            navigating = false
             _trip.value = null
+            main.post { if (reroute != null) { main.removeCallbacks(sendReroute); sendReroute.run() } }
         }
         override fun updateTrip(trip: Bundleable?) {
             _trip.value = runCatching { trip?.get() as? androidx.car.app.navigation.model.Trip }.getOrNull()
@@ -790,6 +825,9 @@ class CarAppConnection(private val context: Context) {
     private companion object {
         /** The newest template API this host claims to understand. */
         const val HOST_API_LEVEL = CarAppApiLevels.LEVEL_8
+
+        /** How long a new destination waits for the old route to end; see [navigateTo]. */
+        const val REROUTE_WAIT_MS = 1_500L
 
         /** Context.BIND_FOREGROUND_SERVICE; the constant itself is hidden from the SDK. */
         const val BIND_FOREGROUND_SERVICE = 0x04000000

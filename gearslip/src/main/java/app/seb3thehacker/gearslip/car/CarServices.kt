@@ -88,13 +88,20 @@ object CarServices {
         if (destination != null && nav.connectedComponent == app.component) {
             nav.navigateTo(destination)
         } else {
+            // Another map app taking over ends the old one's route, or it keeps guiding unseen.
+            if (nav.connectedComponent != app.component) endRoute()
             nav.connect(app, frame.width, frame.height, frame.densityDpi, destination)
         }
     }
 
     fun stopNav() {
         navStopped = true
+        endRoute()
         nav.disconnect()
+    }
+
+    private fun endRoute() {
+        if (nav.navigating) nav.stopNavigating()
     }
 
     /** Undoes [stopNav]'s hold so the last map app comes back, same as it would after a restart. */
