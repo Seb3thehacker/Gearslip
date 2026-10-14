@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import android.content.Context
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.isSystemInDarkTheme
 import app.seb3thehacker.gearslip.car.CarSettings
 import app.seb3thehacker.gearslip.car.BluetoothAudioCheck
 import android.provider.Settings
@@ -162,9 +165,13 @@ private fun BluetoothMissingCard() {
     val warn by CarSettings.bluetoothWarning.collectAsStateWithLifecycle()
     if (!missing || usb || !warn) return
     val context = LocalContext.current
-    val scheme = MaterialTheme.colorScheme
+    // Yellow, not the theme's error red: music is missing, but nothing is broken. Material has no
+    // warning colour, so these are fixed amber tones for light and dark.
+    val dark = isSystemInDarkTheme()
+    val container = if (dark) Color(0xFF4A3B00) else Color(0xFFFFE08A)
+    val content = if (dark) Color(0xFFFFE08A) else Color(0xFF3A2E00)
     Spacer(Modifier.height(16.dp))
-    Surface(color = scheme.errorContainer, contentColor = scheme.onErrorContainer, shape = MaterialTheme.shapes.extraLarge) {
+    Surface(color = container, contentColor = content, shape = MaterialTheme.shapes.extraLarge) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Bluetooth isn't connected", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
             Text(
@@ -173,6 +180,7 @@ private fun BluetoothMissingCard() {
                 style = MaterialTheme.typography.bodyMedium,
             )
             Button(
+                colors = ButtonDefaults.buttonColors(containerColor = content, contentColor = container),
                 onClick = {
                     runCatching {
                         context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
