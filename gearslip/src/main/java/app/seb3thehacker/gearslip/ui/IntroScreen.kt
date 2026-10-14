@@ -104,6 +104,7 @@ import kotlinx.coroutines.delay
 object Intro {
     private const val PREFS = "intro"
     private const val KEY_SEEN = "seen_release"
+    private const val KEY_STEP = "step"
 
     /** "0.3" from "0.3.00-alpha": the intro belongs to a release, not to each patch. */
     val release: String = BuildConfig.VERSION_NAME.split('.').take(2).joinToString(".")
@@ -123,7 +124,23 @@ object Intro {
     }
 
     fun markSeen(context: Context) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SEEN, release).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_SEEN, release)
+            .remove(KEY_STEP)
+            .apply()
+    }
+
+    /** A replay from Settings starts at the first page. */
+    fun replay(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(KEY_STEP).apply()
+    }
+
+    /** The page the intro was on, so an app restart part-way through resumes there. */
+    internal fun savedStep(context: Context): String? =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_STEP, null)
+
+    internal fun saveStep(context: Context, step: String) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_STEP, step).apply()
     }
 }
 
@@ -145,7 +162,8 @@ internal fun introColors(): IntroColors {
     )
 }
 
-private enum class IntroStep { WELCOME, WIRELESS, KNOBS, VOICE, GRAPHENE, THANKS, CHAT, APPS, THEME, DRIVE }
+/** In the order shown: what's new, what to pick, housekeeping, then the people behind it. */
+private enum class IntroStep { WELCOME, WIRELESS, KNOBS, VOICE, THEME, APPS, GRAPHENE, CHAT, DRIVE, THANKS }
 
 private val Pop = CubicBezierEasing(0.3f, 1.6f, 0.5f, 1f)
 private val Rise = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
@@ -158,8 +176,12 @@ fun IntroScreen(onDone: () -> Unit) {
     val steps = remember {
         IntroStep.entries.filter { it != IntroStep.GRAPHENE || UsageStats.osName(context) == "GrapheneOS" }
     }
-    var index by remember { mutableIntStateOf(0) }
+    // Turning exploit protection back on restarts the app, so the intro picks up where it was.
+    var index by remember {
+        mutableIntStateOf(steps.indexOfFirst { it.name == Intro.savedStep(context) }.coerceAtLeast(0))
+    }
     val step = steps[index]
+    LaunchedEffect(step) { Intro.saveStep(context, step.name) }
     val finish = {
         Intro.markSeen(context)
         onDone()
@@ -285,8 +307,6 @@ private fun Welcome(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit
             )
         }
 
-        Ticker(c.primary, c.onPrimary, "WIRELESS ✦ KNOB SUPPORT ✦ OFFLINE VOICE ✦ FASTER VIDEO ✦ AUTO UPDATES ✦ ", cq, cqSp, reverse = false, tilt = -4f,
-            key = key, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = height * 0.15f))
         Confetti(c, key, Modifier.fillMaxSize())
     }
 }

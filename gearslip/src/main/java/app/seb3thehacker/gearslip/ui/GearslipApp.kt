@@ -123,7 +123,7 @@ fun GearslipApp(onDisconnect: () -> Unit, onRequestCallScreening: () -> Unit) {
                     onOpenCarPreview = { settingsAtUsageNotes = false; screen = Screen.CAR_PREVIEW },
                     onOpenLogs = { settingsAtUsageNotes = false; screen = Screen.LOGS },
                     onReplayTutorial = { screen = Screen.SETUP_GUIDE },
-                    onReplayIntro = { introReturn = Screen.SETTINGS; screen = Screen.INTRO },
+                    onReplayIntro = { Intro.replay(context); introReturn = Screen.SETTINGS; screen = Screen.INTRO },
                     atUsageNotes = settingsAtUsageNotes,
                 )
                 Screen.RECOMMENDED_APPS -> RecommendedAppsScreen(onBack = { screen = Screen.SETTINGS })
