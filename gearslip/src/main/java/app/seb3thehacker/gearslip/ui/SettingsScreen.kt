@@ -119,6 +119,10 @@ fun SettingsScreen(
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             Spacer(Modifier.height(0.dp))
+            SettingsSection(
+                "Support Gearslip",
+                footer = "Gearslip is free, with no ads and no tracking. Donations keep it going.",
+            ) { DonateRows() }
             ConnectionSection()
             HelpSection(onOpenHelp, onOpenCarPreview, onOpenLogs)
             CarAudioSection()
@@ -131,10 +135,6 @@ fun SettingsScreen(
             ) { UsageStatsRows() }
             SettingsSection("Updates") { UpdateRow() }
             CertificateSection()
-            SettingsSection(
-                "Support Gearslip",
-                footer = "Gearslip is free, with no ads and no tracking. Donations keep it going.",
-            ) { DonateRows() }
             AboutSection(onOpenWhatsNew, onReplayTutorial, onReplayIntro)
             Spacer(Modifier.height(16.dp))
         }

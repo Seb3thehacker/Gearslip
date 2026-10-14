@@ -144,6 +144,8 @@ fun HomeScreen(
         }
         // Sharing just went on from the "it worked" ask: a little thanks.
         if (celebrate) ConfettiFall(onDone = WorkedPrompt::celebrated)
+        // The usage notes ask comes first; the donation ask waits until that's answered.
+        if (workedCar == null) DonateDialog(live)
     }
 }
 

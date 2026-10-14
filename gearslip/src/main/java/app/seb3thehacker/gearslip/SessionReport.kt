@@ -228,6 +228,7 @@ object SessionReport {
             }
             if (outcome == "connected") runCatching {
                 app.seb3thehacker.gearslip.stats.WorkedPrompt.onDriveWorked(context, headUnitInfo, protocolVersion, carScreen, carDpi)
+                app.seb3thehacker.gearslip.ui.DonatePrompt.onDriveWorked(context)
             }
             runCatching { app.seb3thehacker.gearslip.update.UpdateChecker.onDriveEnded(context) }
         }
