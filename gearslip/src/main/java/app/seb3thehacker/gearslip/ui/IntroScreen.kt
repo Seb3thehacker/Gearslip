@@ -21,7 +21,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -156,22 +155,19 @@ fun IntroScreen(onDone: () -> Unit) {
     }
     BackHandler(enabled = index > 0) { index-- }
 
-    BoxWithConstraints(
-        Modifier
-            .fillMaxSize()
-            .background(c.surface)
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                if (index < steps.lastIndex) index++
-            },
-    ) {
+    BoxWithConstraints(Modifier.fillMaxSize().background(c.surface)) {
         val w = maxWidth
+        val h = maxHeight
         // The mockup's cqw: one percent of the screen's width.
         fun cq(n: Float): Dp = w * (n / 100f)
         val density = LocalDensity.current
         fun cqSp(n: Float): TextUnit = with(density) { cq(n).toSp() }
 
+        // The step on top, Back and Next under it, the same as the setup guide.
+        Column(Modifier.fillMaxSize()) {
+        Box(Modifier.weight(1f).fillMaxWidth()) {
         when (step) {
-            IntroStep.WELCOME -> Welcome(c, ::cq, ::cqSp, maxHeight)
+            IntroStep.WELCOME -> Welcome(c, ::cq, ::cqSp, h)
             IntroStep.WIRELESS -> BadgeStep(c, ::cq, ::cqSp, c.secondaryC, "Wireless.",
                 "If your car does wireless Android Auto, pair once and leave the cable at home.", step) { WifiIcon(c.onSecondaryC) }
             IntroStep.KNOBS -> BadgeStep(c, ::cq, ::cqSp, c.tertiaryC, "Knobs work.",
@@ -205,12 +201,20 @@ fun IntroScreen(onDone: () -> Unit) {
                 "Pick how the car's buttons look. Change it any time in the car's settings.", step,
                 extra = { ThemePicker(c, ::cq, ::cqSp, step) }) { ButtonsIcon(c.onTertiaryC) }
             IntroStep.DRIVE -> BadgeStep(c, ::cq, ::cqSp, c.primaryC, "Let's drive.",
-                "That's ${Intro.release}. Plug in, or just get in.", step,
-                action = "Start" to finish) { CheckIcon(c.onPrimaryC) }
+                "That's ${Intro.release}. Plug in, or just get in.", step) { CheckIcon(c.onPrimaryC) }
         }
-
-        Dots(c, steps.size, index, ::cq, Modifier.align(Alignment.BottomCenter).padding(bottom = maxHeight * 0.05f))
-        if (step != IntroStep.DRIVE) Hint(c, ::cqSp, step, Modifier.align(Alignment.BottomCenter).padding(bottom = maxHeight * 0.09f))
+        }
+        Column(Modifier.fillMaxWidth().padding(horizontal = cq(8f))) {
+            Dots(c, steps.size, index, ::cq, Modifier.align(Alignment.CenterHorizontally))
+            Spacer(Modifier.height(cq(5f)))
+            PillRow(
+                c, ::cq, ::cqSp,
+                onBack = if (index > 0) ({ index-- }) else null,
+                label = if (index == steps.lastIndex) "Start" else "Next",
+            ) { if (index < steps.lastIndex) index++ else finish() }
+            Spacer(Modifier.height(cq(6f)))
+        }
+        }
     }
 }
 
@@ -823,16 +827,3 @@ internal fun Dots(c: IntroColors, count: Int, current: Int, cq: (Float) -> Dp, m
     }
 }
 
-/** "Tap to continue", once the step has finished arriving, breathing softly. */
-@Composable
-private fun Hint(c: IntroColors, cqSp: (Float) -> TextUnit, key: Any, modifier: Modifier) {
-    val shown = entrance(key, 1600, 600)
-    val breathe by rememberInfiniteTransition(label = "hint").animateFloat(
-        0.75f, 0.35f, infiniteRepeatable(tween(1200), RepeatMode.Reverse), label = "hint",
-    )
-    Text(
-        "Tap to continue", color = c.onVariant,
-        style = TextStyle(fontSize = cqSp(3.6f), fontWeight = FontWeight.SemiBold),
-        modifier = modifier.graphicsLayer { alpha = if (shown < 1f) shown * 0.75f else breathe },
-    )
-}

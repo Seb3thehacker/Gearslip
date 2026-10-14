@@ -585,11 +585,11 @@ fun SetupGuideScreen(onRequestCallScreening: () -> Unit, onDone: () -> Unit, onl
     }
 }
 
-private enum class PillStyle { FILLED, OUTLINED, TEXT }
+internal enum class PillStyle { FILLED, OUTLINED, TEXT }
 
 /** The intro's rounded buttons: filled for the step's main action, outlined beside it, bare text to skip. */
 @Composable
-private fun Pill(c: IntroColors, cqSp: (Float) -> TextUnit, label: String, style: PillStyle, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun Pill(c: IntroColors, cqSp: (Float) -> TextUnit, label: String, style: PillStyle, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     Box(
         modifier
@@ -616,7 +616,7 @@ private fun Pill(c: IntroColors, cqSp: (Float) -> TextUnit, label: String, style
 
 /** Back on the left once there's a page to go back to, and the page's main action filling the rest. */
 @Composable
-private fun PillRow(
+internal fun PillRow(
     c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit,
     onBack: (() -> Unit)?, label: String, onClick: () -> Unit,
 ) {
