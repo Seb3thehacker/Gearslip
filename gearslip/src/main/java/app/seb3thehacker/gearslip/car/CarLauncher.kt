@@ -70,12 +70,8 @@ private class Tile(
     val label: String,
     val icon: ImageBitmap? = null,
     val glyph: ImageVector? = null,
-    /** Tested from start to finish with Gearslip; drawn with a check mark. */
-    val verified: Boolean = false,
     /** Known not to work; drawn with a red X instead of being left off the launcher. */
     val broken: Boolean = false,
-    /** Starts and can be used, but rough enough not to call working; drawn with a yellow mark. */
-    val partial: Boolean = false,
     val onLongClick: (() -> Unit)? = null,
     val onClick: () -> Unit,
 )
@@ -250,18 +246,15 @@ fun CarLauncher() {
     val all = rememberAllEntries()
     val running = rememberRunningApps()
     val showVehicleData = rememberVehicleDataShown()
-    var showBadgeKey by remember { mutableStateOf(false) }
 
     fun tileOf(entry: Entry): Tile {
-        // The badges rate an app's own car screens; a messenger shown on Gearslip's own Messages
-        // screen has none, so it gets no badge.
+        // Only apps that don't work get a mark. The X rates an app's own car screens; a messenger
+        // shown on Gearslip's own Messages screen has none, so it never gets one.
         val pkg = entry.packageName?.takeIf { entry.messaging == null }
         val id = entry.componentId
         return Tile(
             entry.label, entry.icon, entry.builtIn?.glyph,
-            verified = pkg != null && !KnownApps.isPartial(pkg) && (KnownApps.works(pkg) || (entry.media != null && KnownApps.playerWorks(pkg))),
             broken = pkg != null && (KnownApps.isBroken(pkg) || (entry.template != null && KnownApps.screenBroken(pkg))),
-            partial = pkg != null && KnownApps.isPartial(pkg),
             onLongClick = id?.let { { navigator.showAppMenu(it) } },
         ) { openApp(entry, id?.let { running[it] }, navigator, frame) }
     }
@@ -277,60 +270,6 @@ fun CarLauncher() {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(tiles) { AppTile(it) }
-        if (tiles.any { it.verified || it.broken || it.partial }) {
-            // Folded away behind one button: it's reference, read once, not something every
-            // visit to the launcher needs spelled out under the grid.
-            item(span = { GridItemSpan(maxLineSpan) }) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    GsButton(onClick = { showBadgeKey = !showBadgeKey }, tone = GsTone.Neutral) {
-                        Icon(Icons.Filled.Info, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text(if (showBadgeKey) "Hide badge key" else "What the badges mean")
-                    }
-                    if (showBadgeKey) {
-                        BadgeLegend(
-                            verified = tiles.any { it.verified },
-                            partial = tiles.any { it.partial },
-                            broken = tiles.any { it.broken },
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** Says what each badge on a tile means, once, under the grid - only the ones actually in use. */
-@Composable
-private fun BadgeLegend(verified: Boolean, partial: Boolean, broken: Boolean) {
-    Column(
-        Modifier.fillMaxWidth().padding(top = 4.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        if (verified) LegendRow(size = 16.dp, badge = { VerifiedBadge(it) }, text = "Tested and working with Gearslip")
-        if (partial) LegendRow(size = 16.dp, badge = { PartialBadge(it) }, text = "Runs, but not cleanly, with Gearslip")
-        if (broken) LegendRow(size = 16.dp, badge = { BrokenBadge(it) }, text = "Doesn't work with Gearslip yet")
-    }
-}
-
-@Composable
-private fun LegendRow(size: androidx.compose.ui.unit.Dp, badge: @Composable (androidx.compose.ui.unit.Dp) -> Unit, text: String) {
-    Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-        badge(size)
-        Spacer(Modifier.width(8.dp))
-        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-/** A green disc with a white check: the same mark on every tile and in the legend. */
-@Composable
-private fun VerifiedBadge(size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
-    Box(
-        modifier.size(size).background(Color(0xFF43A047), CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(Icons.Filled.Check, contentDescription = "Tested and working", tint = Color.White, modifier = Modifier.size(size * 0.66f))
     }
 }
 
@@ -345,39 +284,16 @@ private fun BrokenBadge(size: androidx.compose.ui.unit.Dp, modifier: Modifier = 
     }
 }
 
-/** A yellow disc with a warning mark: neither the check nor the X, since this app runs but isn't clean about it. */
-@Composable
-private fun PartialBadge(size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
-    Box(
-        modifier.size(size).background(Color(0xFFF9A825), CircleShape),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(Icons.Filled.Warning, contentDescription = "Works, but not cleanly, with Gearslip", tint = Color.White, modifier = Modifier.size(size * 0.6f))
-    }
-}
-
-/** Trial: where a tile says whether its app works. See [AppTileBody]. */
-private enum class BadgeStyle { ON_ICON, OUTLINE }
-private val BADGE_STYLE = BadgeStyle.ON_ICON
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AppTile(tile: Tile) {
-    val status = when {
-        tile.verified -> Color(0xFF43A047)
-        tile.partial -> Color(0xFFF9A825)
-        tile.broken -> Color(0xFFD32F2F)
-        else -> null
-    }
     val shape = MaterialTheme.shapes.extraLarge
     // A long press opens the app's menu (pin, close) - the same gesture everywhere apps are
     // shown, here and on the nav bar. GsIconBox marks it in the theme's style.
     GsIconBox(
         onClick = tile.onClick,
         onLongClick = tile.onLongClick,
-        modifier = Modifier.height(120.dp).then(
-            if (BADGE_STYLE == BadgeStyle.OUTLINE && status != null) Modifier.border(2.5.dp, status, shape) else Modifier,
-        ),
+        modifier = Modifier.height(120.dp),
         colors = GsColors(MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant),
         shape = shape,
     ) {
@@ -389,16 +305,14 @@ private fun AppTile(tile: Tile) {
             ) {
                 Box {
                     TileIcon(tile)
-                    if (BADGE_STYLE == BadgeStyle.ON_ICON) {
+                    if (tile.broken) {
                         // Pinned to the icon's lower corner, ringed in the tile's colour so it
                         // reads as sitting on top of the icon.
-                        val ring = Modifier.align(Alignment.BottomEnd).offset(x = 6.dp, y = 4.dp)
-                            .border(2.dp, MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-                        when {
-                            tile.verified -> VerifiedBadge(22.dp, ring)
-                            tile.broken -> BrokenBadge(22.dp, ring)
-                            tile.partial -> PartialBadge(22.dp, ring)
-                        }
+                        BrokenBadge(
+                            22.dp,
+                            Modifier.align(Alignment.BottomEnd).offset(x = 6.dp, y = 4.dp)
+                                .border(2.dp, MaterialTheme.colorScheme.surfaceVariant, CircleShape),
+                        )
                     }
                 }
                 Spacer(Modifier.height(8.dp))
