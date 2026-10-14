@@ -97,8 +97,8 @@ import kotlin.random.Random
 import kotlinx.coroutines.delay
 
 /**
- * The release intro: a few tap-through screens shown once after each new release (and on a new
- * install), before setup. Its look follows the 0.3 mockup: Material shapes in the phone's own colours,
+ * The release intro: a few screens shown once after updating to a new release, before setup. New
+ * installs skip it. Its look follows the 0.3 mockup: Material shapes in the phone's own colours,
  * with every size taken from the screen's width so it scales from small phones to tablets.
  */
 object Intro {
@@ -108,8 +108,19 @@ object Intro {
     /** "0.3" from "0.3.00-alpha": the intro belongs to a release, not to each patch. */
     val release: String = BuildConfig.VERSION_NAME.split('.').take(2).joinToString(".")
 
-    fun due(context: Context): Boolean =
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SEEN, null) != release
+    /**
+     * True once per release for people who updated. A new install gets the setup guide instead:
+     * there's nothing "new" yet, so this release counts as seen and the next one shows.
+     */
+    fun due(context: Context): Boolean {
+        if (context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_SEEN, null) == release) return false
+        val info = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
+        if (info != null && info.firstInstallTime == info.lastUpdateTime) {
+            markSeen(context)
+            return false
+        }
+        return true
+    }
 
     fun markSeen(context: Context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_SEEN, release).apply()
@@ -187,7 +198,10 @@ fun IntroScreen(onDone: () -> Unit) {
             ) { ShieldIcon(c.onSecondaryC, c.secondaryC) }
             IntroStep.THANKS -> BadgeStep(c, ::cq, ::cqSp, c.tertiaryC, "Thank you.",
                 "Thanks to your usage notes, Gearslip is confirmed to work in cars newer than 2020. " +
-                    "Each note shows which cars work and which still fail, so I know what to fix next.", step) { HeartIcon(c.onTertiaryC) }
+                    "Each note shows which cars work and which still fail, so I know what to fix next.", step,
+                action = "See which cars work" to { GearslipLinks.open(context, GearslipLinks.CARS) },
+                outlined = true,
+            ) { HeartIcon(c.onTertiaryC) }
             IntroStep.CHAT -> BadgeStep(c, ::cq, ::cqSp, c.primaryC, "Come say hi.",
                 "Gearslip has a chat room on Matrix. Talk with other drivers about cars, apps, and " +
                     "where Gearslip is headed.", step,
@@ -195,7 +209,7 @@ fun IntroScreen(onDone: () -> Unit) {
                 outlined = true,
             ) { ChatIcon(c.onPrimaryC, c.primaryC) }
             IntroStep.APPS -> BadgeStep(c, ::cq, ::cqSp, c.secondaryC, "Good company.",
-                "Free, open-source apps that work well in the car. Tap one to see it on GitHub.", step,
+                "Free, open-source apps that work well in the car. The first in each row works best. Tap one to see it on GitHub.", step,
                 extra = { AppPicks(c, ::cq, ::cqSp, step) }) { StarIcon(c.onSecondaryC) }
             IntroStep.THEME -> BadgeStep(c, ::cq, ::cqSp, c.tertiaryC, "Your buttons.",
                 "Pick how the car's buttons look. Change it any time in the car's settings.", step,
@@ -489,38 +503,56 @@ private fun CommandDrift(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> Tex
     }
 }
 
+/** Each kind of app with its picks, the first recommended most. */
 private val APP_PICKS = listOf(
-    Triple("Music", "Metrolist", "https://github.com/MetrolistGroup/Metrolist"),
-    Triple("Maps", "Vela", "https://github.com/PimpinPumpkin/Vela"),
-    Triple("Podcasts", "AntennaPod", "https://github.com/AntennaPod/AntennaPod"),
+    "Maps" to listOf(
+        "Organic Maps" to "https://github.com/organicmaps/organicmaps",
+        "Vela" to "https://github.com/PimpinPumpkin/Vela",
+    ),
+    "Music" to listOf(
+        "ViVi Music" to "https://github.com/vivizzz007/vivi-music",
+        "Metrolist" to "https://github.com/MetrolistGroup/Metrolist",
+    ),
+    "Podcasts" to listOf(
+        "AntennaPod" to "https://github.com/AntennaPod/AntennaPod",
+    ),
 )
 
-/** One row per pick, each opening the app's GitHub page; they arrive one after another. */
+/** One row per kind, with a chip per app opening its GitHub page; the rows arrive one after another. */
 @Composable
 private fun AppPicks(c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit, key: IntroStep) {
     val context = LocalContext.current
     Column(Modifier.padding(top = cq(6f)), verticalArrangement = Arrangement.spacedBy(cq(2.6f))) {
-        APP_PICKS.forEachIndexed { i, (kind, name, url) ->
-            Row(
+        APP_PICKS.forEachIndexed { i, (kind, apps) ->
+            Column(
                 Modifier
                     .fillMaxWidth()
                     .up(entrance(key, 500 + i * 120, 700), cq(7f))
                     .clip(RoundedCornerShape(cq(5f)))
                     .background(c.secondaryC)
-                    .clickable {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                        }
-                    }
-                    .padding(horizontal = cq(5f), vertical = cq(3.4f)),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(horizontal = cq(4f), vertical = cq(3f)),
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text(kind.uppercase(), color = c.onSecondaryC.copy(alpha = 0.7f),
-                        style = TextStyle(fontSize = cqSp(3.2f), fontWeight = FontWeight.Bold, letterSpacing = cqSp(0.3f)))
-                    Text(name, color = c.onSecondaryC, style = TextStyle(fontSize = cqSp(5.2f), fontWeight = FontWeight.ExtraBold))
+                Text(kind.uppercase(), color = c.onSecondaryC.copy(alpha = 0.7f),
+                    style = TextStyle(fontSize = cqSp(3.2f), fontWeight = FontWeight.Bold, letterSpacing = cqSp(0.3f)),
+                    modifier = Modifier.padding(start = cq(1f), bottom = cq(1.6f)))
+                Row(horizontalArrangement = Arrangement.spacedBy(cq(2f))) {
+                    apps.forEach { (name, url) ->
+                        Text(
+                            "$name ↗", color = c.onSecondaryC,
+                            style = TextStyle(fontSize = cqSp(4.4f), fontWeight = FontWeight.ExtraBold),
+                            maxLines = 1,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .border(BorderStroke(1.5.dp, c.onSecondaryC.copy(alpha = 0.35f)), RoundedCornerShape(50))
+                                .clickable {
+                                    runCatching {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                                    }
+                                }
+                                .padding(horizontal = cq(3.6f), vertical = cq(2f)),
+                        )
+                    }
                 }
-                Text("GitHub ↗", color = c.onSecondaryC, style = TextStyle(fontSize = cqSp(3.8f), fontWeight = FontWeight.SemiBold))
             }
         }
     }
