@@ -54,6 +54,7 @@ fun CarSettingsScreen() {
     val whatsNew by CarSettings.whatsNewAfterUpdates.collectAsState()
     val pipeAudio by CarSettings.pipeAudio.collectAsState()
     val speakDirections by CarSettings.speakDirections.collectAsState()
+    val bluetoothWarning by CarSettings.bluetoothWarning.collectAsState()
     val autoplay by CarSettings.autoplay.collectAsState()
     val playerTitle by CarSettings.playerTitle.collectAsState()
     val theme by CarSettings.appTheme.collectAsState()
@@ -137,6 +138,13 @@ fun CarSettingsScreen() {
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (!pipeAudio) {
+            ChoiceRow(
+                "Warn when Bluetooth isn't connected",
+                listOf(false to "Off", true to "On"),
+                bluetoothWarning,
+            ) { CarSettings.setBluetoothWarning(it) }
+        }
 
         ChoiceRow(
             "Spoken directions",

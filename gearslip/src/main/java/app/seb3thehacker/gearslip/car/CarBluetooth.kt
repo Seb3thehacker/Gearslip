@@ -63,6 +63,9 @@ object CarBluetooth {
     @Volatile private var pairing = false
     private var receiver: BroadcastReceiver? = null
 
+    /** The car's Bluetooth address, when it named one in its service list. */
+    val carAddress: String? get() = car?.service?.carAddress
+
     /** The car's Bluetooth channel once the driver has asked to pair, -1 otherwise. */
     val channelId: Int get() = car?.takeIf { pairing }?.service?.serviceId ?: -1
 

@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import android.content.Context
+import app.seb3thehacker.gearslip.car.CarSettings
+import app.seb3thehacker.gearslip.car.BluetoothAudioCheck
+import android.provider.Settings
+import android.content.Intent
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -104,6 +108,7 @@ fun HomeScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                     StatusCard(status)
+                    if (live) BluetoothMissingCard()
                     VoiceDownloadCard()
                     // The first drive that worked asks once to share it, right under the result.
                     val car = workedCar
@@ -146,6 +151,36 @@ fun HomeScreen(
         if (celebrate) ConfettiFall(onDone = WorkedPrompt::celebrated)
         // The usage notes ask comes first; the donation ask waits until that's answered.
         if (workedCar == null) DonateDialog(live)
+    }
+}
+
+/** Bluetooth audio is chosen, but the phone isn't connected to the car. See [BluetoothAudioCheck]. */
+@Composable
+private fun BluetoothMissingCard() {
+    val missing by BluetoothAudioCheck.missing.collectAsStateWithLifecycle()
+    val usb by CarSettings.pipeAudio.collectAsStateWithLifecycle()
+    val warn by CarSettings.bluetoothWarning.collectAsStateWithLifecycle()
+    if (!missing || usb || !warn) return
+    val context = LocalContext.current
+    val scheme = MaterialTheme.colorScheme
+    Spacer(Modifier.height(16.dp))
+    Surface(color = scheme.errorContainer, contentColor = scheme.onErrorContainer, shape = MaterialTheme.shapes.extraLarge) {
+        Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Bluetooth isn't connected", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Text(
+                "Music plays over Bluetooth, but your phone isn't connected to the car. Connect it " +
+                    "here or from the car's Bluetooth menu.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Button(
+                onClick = {
+                    runCatching {
+                        context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }
+                },
+                modifier = Modifier.padding(top = 4.dp),
+            ) { Text("Bluetooth settings") }
+        }
     }
 }
 

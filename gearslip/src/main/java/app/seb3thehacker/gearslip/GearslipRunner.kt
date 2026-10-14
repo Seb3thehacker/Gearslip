@@ -4,6 +4,7 @@ import android.os.Build
 import app.seb3thehacker.gearslip.audio.AudioLink
 import app.seb3thehacker.gearslip.audio.CarMic
 import app.seb3thehacker.gearslip.media.CarMediaStatus
+import app.seb3thehacker.gearslip.car.BluetoothAudioCheck
 import app.seb3thehacker.gearslip.car.CarBluetooth
 import app.seb3thehacker.gearslip.car.ClusterNav
 import app.seb3thehacker.gearslip.car.DirectionsVoice
@@ -165,6 +166,7 @@ class GearslipRunner(
         CarSensors.clear()
         CarMic.current = null
         CarBluetooth.onCarDisconnected()
+        BluetoothAudioCheck.onCarDisconnected()
         mediaStatus?.stop()
         mediaStatus = null
         clusterNav?.stop()
@@ -1013,6 +1015,7 @@ class GearslipRunner(
                 if (projection != null && surface != null) {
                     projection.onSurfaceReady(surface, width, height, config.density)
                     SessionStatus.projecting()
+                    BluetoothAudioCheck.onProjecting()
                 }
             }.onFailure { e -> log.e("encoder start failed", e) }
         }

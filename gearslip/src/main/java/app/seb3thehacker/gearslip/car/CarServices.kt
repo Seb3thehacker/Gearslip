@@ -67,6 +67,7 @@ object CarServices {
         CarAssistant.init(appContext)
         DirectionsVoice.init(appContext)
         CarBluetooth.init(appContext)
+        BluetoothAudioCheck.init(appContext)
         CarKeys.init(appContext)
         VoiceReply.init(appContext)
         // Loaded now, while nothing's waiting on it, so the first reply isn't slower than the rest.

@@ -29,6 +29,7 @@ object CarSettings {
     private const val KEY_NIGHT = "car_night_mode"
     private const val KEY_PIPE_AUDIO = "car_pipe_audio"
 private const val KEY_SPEAK_DIRECTIONS = "car_speak_directions"
+private const val KEY_BLUETOOTH_WARNING = "car_bluetooth_warning"
     private const val KEY_AUDIO_CHOICE_ASKED = "car_audio_choice_asked"
     private const val KEY_LAST_NAV = "car_last_nav"
     private const val KEY_LAST_MEDIA = "car_last_media"
@@ -60,6 +61,7 @@ private const val KEY_SPEAK_DIRECTIONS = "car_speak_directions"
     private val nightFlow = MutableStateFlow(NightMode.AUTO)
     private val pipeAudioFlow = MutableStateFlow(true)
     private val speakDirectionsFlow = MutableStateFlow(true)
+    private val bluetoothWarningFlow = MutableStateFlow(true)
     private val lastNavFlow = MutableStateFlow<String?>(null)
     private val lastMediaFlow = MutableStateFlow<String?>(null)
     private val autoplayFlow = MutableStateFlow(false)
@@ -158,6 +160,9 @@ private const val KEY_SPEAK_DIRECTIONS = "car_speak_directions"
     /** Gearslip reads the map app's turns aloud on the car's directions channel; see DirectionsVoice. */
     val speakDirections: StateFlow<Boolean> = speakDirectionsFlow
 
+    /** With Bluetooth audio, warn when the phone isn't connected to the car; see BluetoothAudioCheck. */
+    val bluetoothWarning: StateFlow<Boolean> = bluetoothWarningFlow
+
     /**
      * Whether the driver has already been offered Bluetooth after turning down the capture
      * dialog. Offered once only: someone who chose to keep the USB route shouldn't be nagged.
@@ -217,6 +222,7 @@ private const val KEY_SPEAK_DIRECTIONS = "car_speak_directions"
         // Until the driver sets it, on for USB audio and off for Bluetooth, where the map app's
         // own voice already reaches the car.
         speakDirectionsFlow.value = AppSettings.getString(app, KEY_SPEAK_DIRECTIONS, pipeAudioFlow.value.toString()) == "true"
+        bluetoothWarningFlow.value = AppSettings.getString(app, KEY_BLUETOOTH_WARNING, "true") == "true"
         nightFlow.value = runCatching {
             NightMode.valueOf(AppSettings.getString(app, KEY_NIGHT, NightMode.AUTO.name))
         }.getOrDefault(NightMode.AUTO)
@@ -291,6 +297,11 @@ private const val KEY_SPEAK_DIRECTIONS = "car_speak_directions"
     fun setSpeakDirections(on: Boolean) {
         speakDirectionsFlow.value = on
         AppSettings.putString(app, KEY_SPEAK_DIRECTIONS, on.toString())
+    }
+
+    fun setBluetoothWarning(on: Boolean) {
+        bluetoothWarningFlow.value = on
+        AppSettings.putString(app, KEY_BLUETOOTH_WARNING, on.toString())
     }
 
     fun setExperimentalFeaturesEnabled(on: Boolean) {
