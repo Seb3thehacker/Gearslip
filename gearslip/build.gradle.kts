@@ -24,6 +24,12 @@ val keystoreProperties = Properties().apply {
     ).firstOrNull { it.exists() }?.inputStream()?.use { load(it) }
 }
 
+// Keeps build output out of the module folder: <root>/build/gearslip/... instead of
+// <root>/gearslip/build/..., so everything this project produces lands under one
+// root-level build/ directory. Set before android {}, which works out the path to R8's default
+// rules from it.
+layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("gearslip"))
+
 android {
     namespace = "app.seb3thehacker.gearslip"
     compileSdk = 37
@@ -57,6 +63,9 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.findByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         // Its own package, so a debug build installs beside the release one instead of over it.
         // Signed with the release key when it's here: both builds declare the car template
@@ -65,17 +74,18 @@ android {
             applicationIdSuffix = ".dev"
             signingConfigs.findByName("release")?.let { signingConfig = it }
             manifestPlaceholders["appLabel"] = "Gearslip Debug"
+            // -Pr8 shrinks a debug build like a release one, to test R8 in the debug install.
+            if (project.hasProperty("r8")) {
+                isMinifyEnabled = true
+                isShrinkResources = true
+                proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            }
         }
     }
 
     buildFeatures {
         buildConfig = true
     }
-
-    // Keeps build output out of the module folder: <root>/build/gearslip/... instead of
-    // <root>/gearslip/build/..., so everything this project produces lands under one
-    // root-level build/ directory.
-    layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("gearslip"))
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
