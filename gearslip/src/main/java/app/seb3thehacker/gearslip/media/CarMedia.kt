@@ -40,7 +40,19 @@ class MediaEntry(
 )
 
 /** [icon] is a drawable id inside the media app's own package, not Gearslip's; 0 for none. */
-class CustomAction(val id: String, val name: String, val extras: Bundle?, val icon: Int = 0)
+class CustomAction(val id: String, val name: String, val extras: Bundle?, val icon: Int = 0, val iconName: String = "") {
+    /**
+     * Whether a toggle like heart or shuffle is on, read from the icon's name - Tidal swaps
+     * ic_favorite for ic_favorite_filled and ic_shuffle for ic_shuffle_active, and keeps the
+     * button's name the same. Whole words only, so "inactive" doesn't count as "active".
+     */
+    val on: Boolean
+        get() = iconName.lowercase().split('_', '.', '-').any { it in ON_WORDS }
+
+    private companion object {
+        val ON_WORDS = setOf("filled", "fill", "active", "on", "selected", "checked", "enabled", "solid", "one", "all")
+    }
+}
 
 /** One entry in the app's own queue - not its library, whatever it has lined up to play next. */
 class QueueTrack(
@@ -228,7 +240,11 @@ class CarMedia(private val context: Context) {
 
     private fun refreshModes() {
         val c = compat
-        _modes.value = if (c == null) Modes() else Modes(shuffle = c.shuffleMode, repeat = c.repeatMode)
+        val modes = if (c == null) Modes() else Modes(shuffle = c.shuffleMode, repeat = c.repeatMode)
+        if (modes.shuffle != _modes.value.shuffle || modes.repeat != _modes.value.repeat) {
+            GearslipLog.i("media: shuffle mode ${modes.shuffle}, repeat mode ${modes.repeat}, rating type ${controller?.ratingType}")
+        }
+        _modes.value = modes
     }
     private var subscribed: String? = null
     private var rootId: String? = null
@@ -366,14 +382,37 @@ class CarMedia(private val context: Context) {
             speed = state?.playbackSpeed ?: 1f,
             updatedAt = state?.lastPositionUpdateTime ?: 0,
             actions = state?.actions ?: 0,
-            custom = state?.customActions.orEmpty().map { CustomAction(it.action, it.name.toString(), it.extras, it.icon) },
+            custom = state?.customActions.orEmpty().map { CustomAction(it.action, it.name.toString(), it.extras, it.icon, iconName(it.icon)) },
             error = state?.errorMessage?.toString(),
             activeQueueItemId = state?.activeQueueItemId ?: MediaSession.QueueItem.UNKNOWN_ID.toLong(),
             heart = if (controller?.ratingType == Rating.RATING_HEART) {
                 metadata?.getRating(MediaMetadata.METADATA_KEY_USER_RATING)?.takeIf { it.isRated }?.hasHeart() ?: false
             } else null,
         )
+        logButtons()
         checkSearch()
+    }
+
+    private var appResources: Pair<String, android.content.res.Resources?>? = null
+
+    /** The icon's resource name in the app's package, or "" when it can't be read. */
+    private fun iconName(icon: Int): String {
+        val pkg = controller?.packageName ?: return ""
+        if (appResources?.first != pkg) {
+            appResources = pkg to runCatching { context.packageManager.getResourcesForApplication(pkg) }.getOrNull()
+        }
+        val res = appResources?.second ?: return ""
+        return runCatching { res.getResourceEntryName(icon) }.getOrDefault("")
+    }
+
+    private var loggedButtons: String? = null
+
+    /** The app's own buttons, by id, name and icon, each time they change. */
+    private fun logButtons() {
+        val text = _now.value.custom.joinToString { a -> "${a.id} \"${a.name}\" icon=${a.iconName.ifEmpty { a.icon.toString() }}" }
+        if (text == loggedButtons) return
+        loggedButtons = text
+        GearslipLog.i("media: app buttons: ${text.ifEmpty { "none" }}")
     }
 
     // --- browsing ------------------------------------------------------------------------

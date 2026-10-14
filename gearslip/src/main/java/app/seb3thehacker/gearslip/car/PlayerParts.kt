@@ -138,29 +138,47 @@ internal fun PlayModeRow(
     val repeatOn = repeatKnown && modes.repeat != PlaybackStateCompat.REPEAT_MODE_NONE
     val icon = size * 0.52f
     Row(modifier, horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-        GsIconButton(
-            if (liked == true) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-            if (liked == true) "Unlike" else "Like",
-            media::toggleLike,
-            enabled = liked != null,
-            tone = if (liked == true) GsTone.Primary else GsTone.Neutral,
-            size = size, iconSize = icon,
-        )
-        GsIconButton(
-            MediaIcons.Shuffle, if (shuffleOn) "Shuffle off" else "Shuffle on",
-            media::toggleShuffle,
-            enabled = shuffleKnown || now.shuffleAction != null,
-            tone = if (shuffleOn) GsTone.Primary else GsTone.Neutral,
-            size = size, iconSize = icon,
-        )
-        GsIconButton(
-            if (modes.repeat == PlaybackStateCompat.REPEAT_MODE_ONE) MediaIcons.RepeatOne else MediaIcons.Repeat,
-            "Repeat",
-            media::cycleRepeat,
-            enabled = repeatKnown || now.repeatAction != null,
-            tone = if (repeatOn) GsTone.Primary else GsTone.Neutral,
-            size = size, iconSize = icon,
-        )
+        // An app's own like, shuffle or repeat button shows whether it's on only through its icon,
+        // so that icon is drawn, as Android Auto does, and lit when its name says it's on.
+        // Gearslip's own stand in for apps that report a heart rating or shuffle and repeat modes.
+        val likeAction = now.likeAction
+        if (likeAction != null) {
+            CustomActionButton(likeAction, media, size, toggle = true)
+        } else {
+            GsIconButton(
+                if (liked == true) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                if (liked == true) "Unlike" else "Like",
+                media::toggleLike,
+                enabled = liked != null,
+                tone = if (liked == true) GsTone.Primary else GsTone.Neutral,
+                size = size, iconSize = icon,
+            )
+        }
+        val shuffleAction = now.shuffleAction
+        if (shuffleAction != null) {
+            CustomActionButton(shuffleAction, media, size, toggle = true)
+        } else {
+            GsIconButton(
+                MediaIcons.Shuffle, if (shuffleOn) "Shuffle off" else "Shuffle on",
+                media::toggleShuffle,
+                enabled = shuffleKnown,
+                tone = if (shuffleOn) GsTone.Primary else GsTone.Neutral,
+                size = size, iconSize = icon,
+            )
+        }
+        val repeatAction = now.repeatAction
+        if (repeatAction != null) {
+            CustomActionButton(repeatAction, media, size, toggle = true)
+        } else {
+            GsIconButton(
+                if (modes.repeat == PlaybackStateCompat.REPEAT_MODE_ONE) MediaIcons.RepeatOne else MediaIcons.Repeat,
+                "Repeat",
+                media::cycleRepeat,
+                enabled = repeatKnown,
+                tone = if (repeatOn) GsTone.Primary else GsTone.Neutral,
+                size = size, iconSize = icon,
+            )
+        }
         now.otherActions.take(maxOther).forEach { CustomActionButton(it, media, size) }
         trailing()
     }
@@ -171,12 +189,12 @@ internal fun PlayModeRow(
  * not Gearslip's, so it's loaded from there. Its name stands in if the icon won't load.
  */
 @Composable
-private fun CustomActionButton(action: CustomAction, media: CarMedia, size: Dp) {
+private fun CustomActionButton(action: CustomAction, media: CarMedia, size: Dp, toggle: Boolean = false) {
     val icon = rememberActionIcon(action)
     GsIconBox(
         onClick = { media.custom(action) },
         modifier = Modifier.size(size),
-        colors = gsColors(GsTone.Neutral),
+        colors = gsColors(if (toggle && action.on) GsTone.Primary else GsTone.Neutral),
     ) {
         if (icon != null) {
             Icon(icon, action.name, Modifier.size(size * 0.52f))
