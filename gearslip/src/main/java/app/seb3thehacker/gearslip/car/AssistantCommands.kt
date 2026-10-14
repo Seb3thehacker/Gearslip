@@ -131,7 +131,7 @@ object AssistantCommands {
             }
         }
         // "the nearest gas station" -> "gas station": the map app already searches around the car
-        // (see CarMotion.nearHere), and Organic Maps took "nearest" as part of the name.
+        // and AutoRoute picks the nearest result, and Organic Maps took "nearest" as part of the name.
         val (place, nearby) = plainPlace(destination)
         destination = place
         if (destination.isBlank()) return "Where to?"
