@@ -45,8 +45,10 @@ object SpeechModels {
         /** Empty for Canary, which decodes with attention and has no joiner. */
         val joiner: String,
         val modelType: String = "",
-        /** Whether Hugging Face has the files unpacked under the archive's name. */
+        /** Whether Hugging Face has the files unpacked; otherwise the archive is unpacked on the phone, slowly. */
         val plainFiles: Boolean = true,
+        /** Where the unpacked files are, when not under the archive's own name on Hugging Face. */
+        private val filesAt: String? = null,
     ) {
         KROKO(
             Role.LIVE, "kroko-en", "Kroko", "Banafo's Kroko ASR, CC BY-SA 4.0", 68,
@@ -54,10 +56,12 @@ object SpeechModels {
             "encoder.onnx", "decoder.onnx", "joiner.onnx", modelType = "zipformer2",
         ),
         PARAKEET_SMALL(
-            Role.FINAL, "parakeet-110m-en", "Parakeet small", "Lighter and quicker, misses more names. NVIDIA NeMo, CC BY 4.0", 103,
+            Role.FINAL, "parakeet-110m-en", "Parakeet small", "Lighter and quicker, misses more names. NVIDIA NeMo, CC BY 4.0", 131,
             "sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8",
             "encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", modelType = "nemo_transducer",
-            plainFiles = false,
+            // The official unpacked copy is empty. This mirror's files are byte for byte the
+            // official archive's, checked by SHA-256, and pinned to that commit so they can't change.
+            filesAt = "punitd/sherpa-onnx-nemo-parakeet_tdt_transducer_110m-en-36000-int8/resolve/66a4fa70643dc7ce25c9b38b2f87e1b35ddad33d",
         ),
         CANARY(
             Role.FINAL, "canary-180m-en", "Canary", "Recommended. Quick, and hears names and places well. Knows English, Spanish, German and French; Gearslip listens in English for now. NVIDIA NeMo, CC BY 4.0", 198,
@@ -72,7 +76,7 @@ object SpeechModels {
         ;
 
         val url get() = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$archive.tar.bz2"
-        fun fileUrl(name: String) = "https://huggingface.co/csukuangfj/$archive/resolve/main/$name"
+        fun fileUrl(name: String) = "https://huggingface.co/${filesAt ?: "csukuangfj/$archive/resolve/main"}/$name"
         val files get() = listOf(encoder, decoder, joiner, "tokens.txt").filter { it.isNotEmpty() }
     }
 
