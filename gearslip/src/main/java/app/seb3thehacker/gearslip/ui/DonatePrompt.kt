@@ -109,11 +109,11 @@ internal fun DonateDialog(live: Boolean) {
         },
         confirmButton = {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { give(GearslipLinks.BUY_ME_A_COFFEE) }, Modifier.fillMaxWidth()) {
-                    Text("Buy me a coffee")
-                }
-                OutlinedButton(onClick = { give(GearslipLinks.LIBERAPAY) }, Modifier.fillMaxWidth()) {
+                Button(onClick = { give(GearslipLinks.LIBERAPAY) }, Modifier.fillMaxWidth()) {
                     Text("Support on Liberapay")
+                }
+                OutlinedButton(onClick = { give(GearslipLinks.BUY_ME_A_COFFEE) }, Modifier.fillMaxWidth()) {
+                    Text("Buy me a coffee")
                 }
                 if (GearslipLinks.PAYMENT_LINK.isNotEmpty()) {
                     OutlinedButton(onClick = { give(GearslipLinks.PAYMENT_LINK) }, Modifier.fillMaxWidth()) {

@@ -228,7 +228,7 @@ fun IntroScreen(onDone: () -> Unit) {
                     "Each note shows which cars work and which still fail, so I know what to fix next.", step,
                 action = "See which cars work" to { GearslipLinks.open(context, GearslipLinks.CARS) },
                 outlined = true,
-                secondAction = "Buy me a coffee" to { GearslipLinks.open(context, GearslipLinks.BUY_ME_A_COFFEE) },
+                secondAction = "Support on Liberapay" to { GearslipLinks.open(context, GearslipLinks.LIBERAPAY) },
             ) { HeartIcon(c.onTertiaryC) }
             IntroStep.CHAT -> BadgeStep(c, ::cq, ::cqSp, c.primaryC, "Come say hi.",
                 "Gearslip has a chat room on Matrix. Talk with other drivers about cars, apps, and " +

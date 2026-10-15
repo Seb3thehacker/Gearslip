@@ -67,7 +67,7 @@ internal object GearslipLinks {
     }
 }
 
-/** The ways to support Gearslip: Buy Me a Coffee first, Monero last, card once it's set up. */
+/** The ways to support Gearslip: Liberapay first, Monero last, card once it's set up. */
 @Composable
 internal fun DonateRows() {
     val context = LocalContext.current
@@ -79,17 +79,17 @@ internal fun DonateRows() {
         )
     }
     SettingsRow(
-        "Buy Me a Coffee",
-        Modifier.clickable { GearslipLinks.open(context, GearslipLinks.BUY_ME_A_COFFEE) },
-        subtitle = "Give once or monthly, by card. Buy Me a Coffee keeps 5%",
+        "Liberapay",
+        Modifier.clickable { GearslipLinks.open(context, GearslipLinks.LIBERAPAY) },
+        subtitle = "Give weekly or monthly",
         icon = Icons.Filled.Favorite,
         trailing = arrow,
     )
     SettingsDivider()
     SettingsRow(
-        "Liberapay",
-        Modifier.clickable { GearslipLinks.open(context, GearslipLinks.LIBERAPAY) },
-        subtitle = "Give weekly or monthly",
+        "Buy Me a Coffee",
+        Modifier.clickable { GearslipLinks.open(context, GearslipLinks.BUY_ME_A_COFFEE) },
+        subtitle = "Give once or monthly, by card. Buy Me a Coffee keeps 5%",
         icon = Icons.Filled.Favorite,
         trailing = arrow,
     )
