@@ -29,12 +29,14 @@ screen-sharing mode.
 
 | | |
 |---|---|
-| ![The launcher, with apps grouped into phone, maps, music, and messaging](docs/screenshots/launcher.png) | ![Vela Maps giving turn-by-turn directions, with the music player beside the map](docs/screenshots/navigation.png) |
-| Apps sorted by kind. A check marks the ones that work. | Vela Maps navigating, with the player beside it. |
+| ![The launcher, with every car app on the phone and the route in the bar below](docs/screenshots/launcher.png) | ![Vela Maps showing the route, with the music player beside the map](docs/screenshots/navigation.png) |
+| Your car apps in one place. A red X marks the ones that don't work yet. | Vela Maps navigating, with the player beside it. |
 | ![ViVi Music's song, art, and controls in Gearslip's player](docs/screenshots/music.png) | ![A new message card over Organic Maps](docs/screenshots/message.png) |
 | ViVi Music in Gearslip's player. | A new message, read aloud at a tap, over the map. |
 | ![The dashboard, with the weather, the next calendar event, and recent notifications](docs/screenshots/dashboard.png) | ![DuckDuckGo open in Gearslip's web browser](docs/screenshots/web.png) |
 | The weather, your next event, and what you missed. | Browse the web while parked. |
+| ![The voice assistant listening over Organic Maps](docs/screenshots/assistant.png) | |
+| Ask for a place, a song, or an app. | |
 
 ## Features
 
