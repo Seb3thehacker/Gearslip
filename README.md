@@ -35,8 +35,8 @@ screen-sharing mode.
 | ViVi Music in Gearslip's player. | A new message, read aloud at a tap, over the map. |
 | ![The dashboard, with the weather, the next calendar event, and recent notifications](docs/screenshots/dashboard.png) | ![DuckDuckGo open in Gearslip's web browser](docs/screenshots/web.png) |
 | The weather, your next event, and what you missed. | Browse the web while parked. |
-| ![The voice assistant listening over Organic Maps](docs/screenshots/assistant.png) | |
-| Ask for a place, a song, or an app. | |
+| ![The voice assistant listening over Organic Maps](docs/screenshots/assistant.png) | ![Coffee shops near you in Vela Maps, with the music player beside the map](docs/screenshots/places.png) |
+| Ask for a place, a song, or an app. | Find coffee nearby without leaving the map. |
 
 ## Features
 
