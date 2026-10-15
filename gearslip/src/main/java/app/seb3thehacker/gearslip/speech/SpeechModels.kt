@@ -18,16 +18,14 @@ import java.util.concurrent.Executors
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 
 /**
  * The speech models Gearslip listens with, in two roles: a streaming one that writes the words
  * while the driver talks, and an optional final one that reads the whole phrase again once they
  * stop, for a more accurate result. None ships in the APK: each is fetched once and kept in the
  * app's own storage. sherpa-onnx's author publishes them twice: as .tar.bz2 archives on GitHub and
- * as plain files on Hugging Face. The plain files come first where they exist. Unpacking bzip2 on
- * the phone pinned a core and held a download to 150 KB/s on Wi-Fi that does 19 MB/s.
+ * as plain files on Hugging Face. Gearslip takes the plain files: unpacking bzip2 on the phone
+ * pinned a core and held a download to 150 KB/s on Wi-Fi that does 19 MB/s.
  */
 object SpeechModels {
 
@@ -45,8 +43,6 @@ object SpeechModels {
         /** Empty for Canary, which decodes with attention and has no joiner. */
         val joiner: String,
         val modelType: String = "",
-        /** Whether Hugging Face has the files unpacked; otherwise the archive is unpacked on the phone, slowly. */
-        val plainFiles: Boolean = true,
         /** Where the unpacked files are, when not under the archive's own name on Hugging Face. */
         private val filesAt: String? = null,
     ) {
@@ -75,7 +71,6 @@ object SpeechModels {
         ),
         ;
 
-        val url get() = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$archive.tar.bz2"
         fun fileUrl(name: String) = "https://huggingface.co/${filesAt ?: "csukuangfj/$archive/resolve/main"}/$name"
         val files get() = listOf(encoder, decoder, joiner, "tokens.txt").filter { it.isNotEmpty() }
     }
@@ -215,7 +210,7 @@ object SpeechModels {
         if (model == _selected.value || model == _final.value) SpeechEngine.unload()
     }
 
-    /** Fetches just the files the recognizer reads, plain where it can, else out of the archive. */
+    /** Fetches just the files the recognizer reads. */
     fun download(context: Context, model: Model) {
         val app = context.applicationContext
         val state = states.getValue(model)
@@ -235,30 +230,17 @@ object SpeechModels {
                     state.value = State.Downloading((((done + read) * 100) / total).toInt().coerceIn(0, 99))
                     updateProgress(app)
                 }
-                if (model.plainFiles) {
-                    for (name in model.files) {
-                        val conn = open(model.fileUrl(name))
-                        val length = conn.contentLengthLong
-                        val file = File(partial, name)
-                        CountingStream(conn.inputStream, ::progress).use { input ->
-                            file.outputStream().use { input.copyTo(it, 256 * 1024) }
-                        }
-                        check(length <= 0 || file.length() == length) { "$name arrived cut short" }
-                        done += file.length()
+                for (name in model.files) {
+                    val conn = open(model.fileUrl(name))
+                    val length = conn.contentLengthLong
+                    val file = File(partial, name)
+                    CountingStream(conn.inputStream, ::progress).use { input ->
+                        file.outputStream().use { input.copyTo(it, 256 * 1024) }
                     }
-                } else {
-                    val conn = open(model.url)
-                    val counting = CountingStream(conn.inputStream, ::progress)
-                    TarArchiveInputStream(BZip2CompressorInputStream(counting.buffered())).use { tar ->
-                        while (true) {
-                            val entry = tar.nextEntry ?: break
-                            val name = entry.name.substringAfterLast('/')
-                            if (entry.isDirectory || name !in model.files) continue
-                            File(partial, name).outputStream().use { tar.copyTo(it) }
-                        }
-                    }
+                    check(length <= 0 || file.length() == length) { "$name arrived cut short" }
+                    done += file.length()
                 }
-                check(model.files.all { File(partial, it).isFile }) { "the archive was missing files" }
+                check(model.files.all { File(partial, it).isFile }) { "some files were missing" }
                 target.deleteRecursively()
                 check(partial.renameTo(target)) { "couldn't store the model" }
                 GearslipLog.i("speech: downloaded ${model.label}")

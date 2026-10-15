@@ -11,10 +11,3 @@
 
 # Speech-to-text: the native library calls back into these classes by name.
 -keep class com.k2fsa.sherpa.onnx.** { *; }
-
-# commons-compress refers to optional codecs Gearslip doesn't ship.
--dontwarn org.tukaani.xz.**
--dontwarn com.github.luben.zstd.**
--dontwarn org.brotli.dec.**
--dontwarn org.objectweb.asm.**
--dontwarn org.osgi.**
