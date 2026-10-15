@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -103,6 +104,11 @@ internal fun DonateDialog(live: Boolean) {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { give(GearslipLinks.LIBERAPAY) }, Modifier.fillMaxWidth()) {
                     Text("Support on Liberapay")
+                }
+                if (GearslipLinks.PAYMENT_LINK.isNotEmpty()) {
+                    OutlinedButton(onClick = { give(GearslipLinks.PAYMENT_LINK) }, Modifier.fillMaxWidth()) {
+                        Text("Give once by card")
+                    }
                 }
                 TextButton(onClick = { DonatePrompt.answer(context, donated = false) }, Modifier.fillMaxWidth()) {
                     Text("Not now")

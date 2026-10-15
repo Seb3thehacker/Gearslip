@@ -228,6 +228,7 @@ fun IntroScreen(onDone: () -> Unit) {
                     "Each note shows which cars work and which still fail, so I know what to fix next.", step,
                 action = "See which cars work" to { GearslipLinks.open(context, GearslipLinks.CARS) },
                 outlined = true,
+                secondAction = "Support on Liberapay" to { GearslipLinks.open(context, GearslipLinks.LIBERAPAY) },
             ) { HeartIcon(c.onTertiaryC) }
             IntroStep.CHAT -> BadgeStep(c, ::cq, ::cqSp, c.primaryC, "Come say hi.",
                 "Gearslip has a chat room on Matrix. Talk with other drivers about cars, apps, and " +
@@ -396,6 +397,7 @@ private fun BadgeStep(
     c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit, badge: Color,
     title: String, body: String, key: Any,
     action: Pair<String, () -> Unit>? = null, outlined: Boolean = false,
+    secondAction: Pair<String, () -> Unit>? = null,
     extra: (@Composable () -> Unit)? = null,
     icon: @Composable () -> Unit,
 ) {
@@ -423,15 +425,14 @@ private fun BadgeStep(
             modifier = Modifier.up(entrance(key, 350, 700), cq(7f)),
         )
         extra?.invoke()
-        if (action != null) {
-            val (label, onClick) = action
-            Spacer(Modifier.height(if (outlined) cq(7f) else cq(9f)))
+        listOfNotNull(action, secondAction).forEachIndexed { i, (label, onClick) ->
+            Spacer(Modifier.height(if (i > 0) cq(3f) else if (outlined) cq(7f) else cq(9f)))
             Text(
                 label,
                 color = if (outlined) c.primary else c.onPrimary,
                 style = TextStyle(fontSize = cqSp(if (outlined) 4.4f else 4.6f), fontWeight = FontWeight.Bold),
                 modifier = Modifier
-                    .up(entrance(key, 500, 700), cq(7f))
+                    .up(entrance(key, 500 + i * 150, 700), cq(7f))
                     .clip(RoundedCornerShape(50))
                     .then(
                         if (outlined) Modifier.border(BorderStroke(2.dp, c.outline), RoundedCornerShape(50))

@@ -1,8 +1,11 @@
 package app.seb3thehacker.gearslip.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -18,6 +21,10 @@ import androidx.compose.ui.platform.LocalContext
 /** Where Gearslip lives outside the app: support, the chat room, and the code. */
 internal object GearslipLinks {
     const val LIBERAPAY = "https://liberapay.com/Seb3thehacker"
+    /** A card payment page for giving once, any amount. Its row stays hidden while this is empty. */
+    const val PAYMENT_LINK = ""
+    /** Gearslip's Monero address. Its row stays hidden while this is empty. */
+    const val MONERO = ""
     const val MATRIX = "https://matrix.to/#/!mf0_mgBd5KqKpc9FfX_wHp1jFCcwAtPrndIn_oGIyMk?via=matrix.org"
     const val SOURCE = "https://github.com/Seb3thehacker/gearslip"
     const val CARS = "$SOURCE/blob/main/CARS.md"
@@ -27,9 +34,20 @@ internal object GearslipLinks {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }
+
+    /** Opens a Monero wallet on the address, or copies it when no wallet app is installed. */
+    fun openMonero(context: Context) {
+        val opened = runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("monero:$MONERO")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.isSuccess
+        if (opened) return
+        context.getSystemService(ClipboardManager::class.java)
+            ?.setPrimaryClip(ClipData.newPlainText("Monero address", MONERO))
+        Toast.makeText(context, "Monero address copied", Toast.LENGTH_SHORT).show()
+    }
 }
 
-/** The way to support Gearslip, opening in the browser. */
+/** The ways to support Gearslip. Liberapay always; card and Monero once they're set up. */
 @Composable
 internal fun DonateRows() {
     val context = LocalContext.current
@@ -43,10 +61,30 @@ internal fun DonateRows() {
     SettingsRow(
         "Liberapay",
         Modifier.clickable { GearslipLinks.open(context, GearslipLinks.LIBERAPAY) },
-        subtitle = "Give weekly or monthly, through a nonprofit",
+        subtitle = "Give weekly or monthly",
         icon = Icons.Filled.Favorite,
         trailing = arrow,
     )
+    if (GearslipLinks.PAYMENT_LINK.isNotEmpty()) {
+        SettingsDivider()
+        SettingsRow(
+            "Give once",
+            Modifier.clickable { GearslipLinks.open(context, GearslipLinks.PAYMENT_LINK) },
+            subtitle = "Any amount, by card",
+            icon = Icons.Filled.Favorite,
+            trailing = arrow,
+        )
+    }
+    if (GearslipLinks.MONERO.isNotEmpty()) {
+        SettingsDivider()
+        SettingsRow(
+            "Monero",
+            Modifier.clickable { GearslipLinks.openMonero(context) },
+            subtitle = "Opens your wallet, or copies the address",
+            icon = Icons.Filled.Favorite,
+            trailing = arrow,
+        )
+    }
 }
 
 /** The About section's links: the chat room, the source code, and credits. */
