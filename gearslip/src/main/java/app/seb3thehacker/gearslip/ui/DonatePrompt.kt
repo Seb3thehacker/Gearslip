@@ -14,7 +14,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -85,7 +87,12 @@ object DonatePrompt {
 internal fun DonateDialog(live: Boolean) {
     val context = LocalContext.current
     val waiting by remember { DonatePrompt.pending(context) }.collectAsStateWithLifecycle()
+    var monero by remember { mutableStateOf(false) }
     if (!waiting || live) return
+    if (monero) {
+        MoneroDialog { DonatePrompt.answer(context, donated = true) }
+        return
+    }
     fun give(url: String) {
         DonatePrompt.answer(context, donated = true)
         GearslipLinks.open(context, url)
@@ -102,13 +109,19 @@ internal fun DonateDialog(live: Boolean) {
         },
         confirmButton = {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { give(GearslipLinks.LIBERAPAY) }, Modifier.fillMaxWidth()) {
+                Button(onClick = { give(GearslipLinks.BUY_ME_A_COFFEE) }, Modifier.fillMaxWidth()) {
+                    Text("Buy me a coffee")
+                }
+                OutlinedButton(onClick = { give(GearslipLinks.LIBERAPAY) }, Modifier.fillMaxWidth()) {
                     Text("Support on Liberapay")
                 }
                 if (GearslipLinks.PAYMENT_LINK.isNotEmpty()) {
                     OutlinedButton(onClick = { give(GearslipLinks.PAYMENT_LINK) }, Modifier.fillMaxWidth()) {
                         Text("Give once by card")
                     }
+                }
+                OutlinedButton(onClick = { monero = true }, Modifier.fillMaxWidth()) {
+                    Text("Monero")
                 }
                 TextButton(onClick = { DonatePrompt.answer(context, donated = false) }, Modifier.fillMaxWidth()) {
                     Text("Not now")

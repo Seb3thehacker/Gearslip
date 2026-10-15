@@ -35,6 +35,7 @@ import androidx.compose.ui.platform.LocalContext
 
 /** Where Gearslip lives outside the app: support, the chat room, and the code. */
 internal object GearslipLinks {
+    const val BUY_ME_A_COFFEE = "https://buymeacoffee.com/seb3thehacker"
     const val LIBERAPAY = "https://liberapay.com/Seb3thehacker"
     /** A card payment page for giving once, any amount. Its row stays hidden while this is empty. */
     const val PAYMENT_LINK = ""
@@ -66,7 +67,7 @@ internal object GearslipLinks {
     }
 }
 
-/** The ways to support Gearslip. Liberapay always; card and Monero once they're set up. */
+/** The ways to support Gearslip: Buy Me a Coffee first, Monero last, card once it's set up. */
 @Composable
 internal fun DonateRows() {
     val context = LocalContext.current
@@ -77,6 +78,14 @@ internal fun DonateRows() {
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+    SettingsRow(
+        "Buy Me a Coffee",
+        Modifier.clickable { GearslipLinks.open(context, GearslipLinks.BUY_ME_A_COFFEE) },
+        subtitle = "Give once or monthly, by card",
+        icon = Icons.Filled.Favorite,
+        trailing = arrow,
+    )
+    SettingsDivider()
     SettingsRow(
         "Liberapay",
         Modifier.clickable { GearslipLinks.open(context, GearslipLinks.LIBERAPAY) },
@@ -110,7 +119,7 @@ internal fun DonateRows() {
 
 /** The Monero address in full, with ways to pay it from this phone or another device. */
 @Composable
-private fun MoneroDialog(onDismiss: () -> Unit) {
+internal fun MoneroDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
