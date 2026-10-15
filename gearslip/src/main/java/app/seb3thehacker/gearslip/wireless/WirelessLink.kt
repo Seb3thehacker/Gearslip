@@ -171,6 +171,8 @@ object WirelessLink {
         val input = DataInputStream(socket.inputStream)
         val output = socket.outputStream
         var target: Pair<String, Int>? = null
+        // Wi-Fi details that came before the address, joined once the StartRequest brings it.
+        var waitingJoin: ((String, Int) -> Unit)? = null
         try {
             while (!Thread.currentThread().isInterrupted) {
                 val length = input.readUnsignedShort()
@@ -201,8 +203,14 @@ object WirelessLink {
                         val port = Wire.varint(f, 2)?.toInt() ?: 0
                         log.i("<- StartRequest: projection at $ip:$port")
                         target = ip to port
-                        send(output, MSG_INFO_REQUEST, ByteArray(0))
-                        log.i("-> InfoRequest")
+                        val join = waitingJoin
+                        if (join != null) {
+                            waitingJoin = null
+                            join(ip, port)
+                        } else {
+                            send(output, MSG_INFO_REQUEST, ByteArray(0))
+                            log.i("-> InfoRequest")
+                        }
                     }
                     MSG_INFO_RESPONSE -> {
                         val f = Wire.fields(body)
@@ -212,11 +220,15 @@ object WirelessLink {
                         val bssid = text(3)
                         val security = Wire.varint(f, 4) ?: -1
                         log.i("<- InfoResponse: ssid=\"$ssid\" bssid=$bssid security=$security password=${if (password.isEmpty()) "none" else "(${password.length} chars)"}")
-                        val (ip, port) = target ?: run {
-                            log.w("InfoResponse before StartRequest: no address to connect to yet")
-                            "" to 0
+                        val join = { ip: String, port: Int -> joinWifi(context, output, name, ssid, password, bssid, ip, port) }
+                        val known = target
+                        if (known != null) {
+                            join(known.first, known.second)
+                        } else {
+                            // Some dongles send the Wi-Fi details first; the address follows a moment later.
+                            log.i("InfoResponse before StartRequest: waiting for the address")
+                            waitingJoin = join
                         }
-                        joinWifi(context, output, name, ssid, password, bssid, ip, port)
                     }
                     MSG_PING -> send(output, MSG_PONG, body)
                     MSG_CONNECTION_STATUS, MSG_START_RESPONSE -> {
@@ -369,7 +381,7 @@ object WirelessLink {
             log.i("probe: Bluetooth (any device) calls ${profileState(calls)}, media audio ${profileState(audio)}")
             log.i(
                 "probe: background data ${manager?.restrictBackgroundStatus} (1 off, 2 allowed, 3 restricted), " +
-                    "active network ${manager?.activeNetwork}, car network $net",
+                    "active network ${manager?.activeNetwork}, car network $net, VPN ${if (vpnActive(context)) "on" else "off"}",
             )
         }.onFailure { log.w("probe: couldn't read the link (${it.message})") }
         for (p in listOf(port, 5288, 5277, 80, 443).distinct()) {
@@ -386,6 +398,12 @@ object WirelessLink {
             log.i("probe: $ip:$p $result")
         }
     }
+
+    /** Whether a VPN carries this app's traffic. Android then refuses to bind sockets to the car's network (EPERM). */
+    private fun vpnActive(context: Context): Boolean = runCatching {
+        val manager = context.getSystemService(ConnectivityManager::class.java)
+        manager.getNetworkCapabilities(manager.activeNetwork)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+    }.getOrDefault(false)
 
     private fun profileState(state: Int?) = when (state) {
         BluetoothProfile.STATE_CONNECTED -> "connected"
@@ -408,6 +426,9 @@ object WirelessLink {
         SessionStatus.connecting("Wi-Fi: reaching $name")
         lostNetwork = null
         var last: Exception? = null
+        // Set once Android refuses to bind to the car's network, which a VPN causes. Plain sockets
+        // then go through the VPN, and VPNs that let local traffic past still reach the car.
+        var bindRefused = false
         repeat(TCP_TRIES) { attempt ->
             if (run != tcpRun) {
                 log.i("TCP: stopping the tries on the old network - the car started over")
@@ -423,7 +444,7 @@ object WirelessLink {
                 if (main != null && attempt == 0) log.i("TCP: the phone's main Wi-Fi is on the car's network, using it")
                 val socket = when {
                     main != null -> main.socketFactory.createSocket()
-                    lostNetwork == net -> Socket()
+                    lostNetwork == net || bindRefused -> Socket()
                     else -> net.socketFactory.createSocket()
                 }
                 socket.tcpNoDelay = true
@@ -441,11 +462,23 @@ object WirelessLink {
             } catch (e: Exception) {
                 last = e
                 log.w("TCP: try ${attempt + 1} to $ip:$port failed: ${e.message}")
+                if (!bindRefused && e.message?.contains("EPERM") == true) {
+                    bindRefused = true
+                    log.i("TCP: Android won't let Gearslip use the car's network directly; trying the phone's ordinary route")
+                }
                 if (attempt == 0) probe(context, net, ip, port)
                 Thread.sleep(1_000)
             }
         }
         log.e("TCP: gave up on $ip:$port", last)
+        if (vpnActive(context)) {
+            SessionStatus.failed(
+                "A VPN is blocking the car",
+                "Gearslip joined $name's network, but a VPN on this phone won't let it reach the car. " +
+                    "Turn the VPN off, or exclude Gearslip in its settings, then try again.",
+            )
+            return
+        }
         SessionStatus.failed(
             "Car's Wi-Fi joined, but no connection",
             "Gearslip joined $name's network but couldn't reach Android Auto at $ip:$port.",
