@@ -1,5 +1,9 @@
 package app.seb3thehacker.gearslip.host
 
+import android.content.Context
+import android.content.pm.PackageManager
+import java.security.MessageDigest
+
 /**
  * Apps that have been run through Gearslip from start to finish and behave. The launcher marks
  * them so a driver can pick something that works without finding out at the wheel.
@@ -65,7 +69,30 @@ object KnownApps {
         "com.generalmagic.magicearth",       // Magic Earth: never gets past connecting
     )
 
-    fun isBroken(packageName: String): Boolean = packageName in broken
+    fun isBroken(context: Context, packageName: String): Boolean =
+        packageName in broken && !patched(context, packageName)
+
+    /**
+     * The certificate each broken app's own publisher signs it with. A copy signed with another
+     * key has been patched to accept Gearslip, like Waze with the waze-gearslip Morphe patch, and
+     * works.
+     */
+    private val officialSigners = mapOf(
+        "com.waze" to "03637f6c5d8f604e6fdb79a6ffbfa578de4e318f8da22fc6106665247f8807d7",
+    )
+
+    /** Whether the installed copy is signed by someone other than its publisher. */
+    private fun patched(context: Context, packageName: String): Boolean {
+        val official = officialSigners[packageName] ?: return false
+        val signers = runCatching {
+            context.packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+                .signingInfo?.apkContentsSigners
+        }.getOrNull() ?: return false
+        val sha256 = MessageDigest.getInstance("SHA-256")
+        return signers.isNotEmpty() && signers.none { cert ->
+            sha256.digest(cert.toByteArray()).joinToString("") { "%02x".format(it) } == official
+        }
+    }
 
     /**
      * Shown on the launcher with a yellow mark: starts and can be used, but not cleanly enough to

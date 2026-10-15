@@ -239,6 +239,7 @@ internal fun launchEntry(entry: Entry, navigator: CarNavigator, frame: CarEnviro
 /** The app launcher: every app as an icon grid, grouped Phone, Maps, Music, Messaging, Web, Screen sharing, Settings. */
 @Composable
 fun CarLauncher() {
+    val context = LocalContext.current
     val navigator = LocalCarNavigator.current
     val frame by CarEnvironment.frame.collectAsState()
 
@@ -254,7 +255,7 @@ fun CarLauncher() {
         val id = entry.componentId
         return Tile(
             entry.label, entry.icon, entry.builtIn?.glyph,
-            broken = pkg != null && (KnownApps.isBroken(pkg) || (entry.template != null && KnownApps.screenBroken(pkg))),
+            broken = pkg != null && (KnownApps.isBroken(context, pkg) || (entry.template != null && KnownApps.screenBroken(pkg))),
             onLongClick = id?.let { { navigator.showAppMenu(it) } },
         ) { openApp(entry, id?.let { running[it] }, navigator, frame) }
     }
