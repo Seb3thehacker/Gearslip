@@ -21,3 +21,6 @@ Gearslip 0.3 goes wireless, takes voice commands, and works with the car's rotar
 - On GrapheneOS, Gearslip no longer needs exploit protection compatibility mode.
 - The car warns you when the phone's location is off.
 - Support Gearslip through Liberapay or Monero, in Settings.
+
+## Known issues
+- Phone calls are unstable right now and may drop or fail to connect.
