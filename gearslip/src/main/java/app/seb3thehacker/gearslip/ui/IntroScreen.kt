@@ -168,7 +168,7 @@ internal fun introColors(): IntroColors {
 }
 
 /** In the order shown: what's new, what to pick, housekeeping, then the people behind it. */
-private enum class IntroStep { WELCOME, WIRELESS, KNOBS, VOICE, THEME, APPS, GRAPHENE, CHAT, DRIVE, THANKS }
+private enum class IntroStep { WELCOME, WIRELESS, KNOBS, VOICE, THEME, APPS, GRAPHENE, CHAT, THANKS }
 
 private val Pop = CubicBezierEasing(0.3f, 1.6f, 0.5f, 1f)
 private val Rise = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
@@ -242,8 +242,6 @@ fun IntroScreen(onDone: () -> Unit) {
             IntroStep.THEME -> BadgeStep(c, ::cq, ::cqSp, c.tertiaryC, "Your buttons.",
                 "Pick how the car's buttons look. Change it any time in the car's settings.", step,
                 extra = { ThemePicker(c, ::cq, ::cqSp, step) }) { ButtonsIcon(c.onTertiaryC) }
-            IntroStep.DRIVE -> BadgeStep(c, ::cq, ::cqSp, c.primaryC, "Let's drive.",
-                "That's ${Intro.release}. Plug in, or just get in.", step) { CheckIcon(c.onPrimaryC) }
         }
         }
         Column(Modifier.fillMaxWidth().padding(horizontal = cq(8f))) {
@@ -842,14 +840,6 @@ internal fun HeartIcon(color: Color) {
                 drawPath(heart, color)
             }
         }
-    }
-}
-
-@Composable
-private fun CheckIcon(color: Color) {
-    val p = entrance(IntroStep.DRIVE, 300, 500)
-    Canvas(Modifier.fillMaxSize()) {
-        inIconBox { drawPartialStroke(listOf(Offset(10f, 26f), Offset(20f, 35f), Offset(38f, 14f)), p, color, 5.5f) }
     }
 }
 
