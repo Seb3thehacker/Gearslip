@@ -183,5 +183,6 @@ any of these companies. All other names belong to their owners.
 
 ## License
 
-Gearslip is licensed under AGPL-3.0; see [LICENSE](LICENSE). The author offers a separate
-commercial license for private use outside the AGPL's terms; see [NOTICE.md](NOTICE.md).
+Gearslip belongs to Twink Software LLC and is licensed under AGPL-3.0; see [LICENSE](LICENSE).
+The LLC also sells a separate commercial license for private use outside the AGPL's terms; see
+[NOTICE.md](NOTICE.md).

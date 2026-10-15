@@ -6,4 +6,4 @@ You may use, run, and modify Gearslip freely. If you distribute a modified versi
 
 ## Commercial licensing
 
-If the AGPL's terms don't work for you, the author sells a separate commercial license. The usual case is a company that wants to use Gearslip privately without publishing its changes. Terms, including any limits on modification, are set case by case. Contact me on Matrix; the address is on my profile.
+If the AGPL's terms don't work for you, Twink Software LLC, which owns Gearslip, sells a separate commercial license. The usual case is a company that wants to use Gearslip privately without publishing its changes. Terms, including any limits on modification, are set case by case. Contact us on Matrix; the address is on the [Seb3thehacker GitHub profile](https://github.com/Seb3thehacker).
