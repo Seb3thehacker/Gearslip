@@ -11,6 +11,26 @@ object Changelog {
 
     val releases = listOf(
         Release(
+            9, "0.3.00-alpha",
+            listOf(
+                "Wireless Android Auto: pair the phone with the car once, and leave the cable at home.",
+                "Voice control is built in. Say \"navigate to a gas station\", \"play\" a song or artist, or open an app by name.",
+                "\"Navigate to\" picks the nearest place and stops at the map app's start screen, so you only tap Start.",
+                "Gearslip turns speech into text on the phone, with no Google account. Download the voice models once in setup.",
+                "The car's rotary knob moves between buttons, so cars without a touchscreen work too.",
+                "Choose how music reaches the car: Bluetooth, or USB with no delay. Gearslip offers to pair with the car the first time.",
+                "The car speaks each turn from your map app, and shows the directions on its own display where it can.",
+                "The car shows what's playing, and music apps get their own like, shuffle and repeat buttons.",
+                "Pick how the car's buttons look. Change it any time in the car's settings.",
+                "A new destination mid-route replaces the old route, and switching map apps ends the old app's route.",
+                "The car warns you when the phone's location is off.",
+                "Gearslip finds new versions and installs them for you.",
+                "More cars play music over USB, show a sharper picture, and put taps where you press.",
+                "On GrapheneOS, Gearslip no longer needs exploit protection compatibility mode.",
+                "The app is half the size it was.",
+            ),
+        ),
+        Release(
             8, "0.2.00-alpha",
             listOf(
                 "Exit takes you to the car's own screen. Tap Android Auto on the car to come back.",
