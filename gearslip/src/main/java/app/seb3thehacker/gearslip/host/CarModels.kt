@@ -141,7 +141,7 @@ fun Distance?.display(): String {
     return "%.${decimals}f $unit".format(distance.displayDistance)
 }
 
-private fun Distance.meters(): Double = displayDistance * when (displayUnit) {
+internal fun Distance.meters(): Double = displayDistance * when (displayUnit) {
     Distance.UNIT_KILOMETERS, Distance.UNIT_KILOMETERS_P1 -> 1000.0
     Distance.UNIT_MILES, Distance.UNIT_MILES_P1 -> 1609.344
     Distance.UNIT_FEET -> 0.3048
@@ -195,6 +195,7 @@ fun androidx.car.app.model.DateTimeWithZone?.clockTime(): String {
  */
 fun OnClickDelegate?.click(label: String = "action") {
     val delegate = this ?: return
+    if (label != AutoRoute.AUTO_LABEL) AutoRoute.driverTappedAt = android.os.SystemClock.elapsedRealtime()
     runCatching { delegate.sendClick(doneCallback("a $label tap")) }
         .onFailure { GearslipLog.w("host: could not send a $label tap: ${it.message}") }
 }

@@ -138,18 +138,18 @@ fun CarKeyboard(
                 }
 
                 // Control row: no backspace here - it stays with the letters above, not next to the
-                // key most likely to be hit right after it by mistake. Dismiss (when offered) is the
-                // last key, bottom-right corner of the keyboard.
+                // key most likely to be hit right after it by mistake. Search/enter takes the
+                // bottom-right corner, where a thumb expects it; dismiss (when offered) sits left of it.
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     Key(if (symbols) "abc" else "?123", Modifier.weight(1.4f)) { symbols = !symbols }
                     Key("space", Modifier.weight(if (onDismiss != null) 3.2f else 4f)) { onTextChange("$text ") }
-                    SubmitKey(Modifier.weight(1.6f), submitIcon, submitImage, onSubmit)
                     if (onDismiss != null) {
                         DismissKey(onDismiss, Modifier.weight(1.4f))
                     }
+                    SubmitKey(Modifier.weight(1.6f), submitIcon, submitImage, onSubmit)
                 }
             }
         }
@@ -222,9 +222,9 @@ private fun SubmitKey(modifier: Modifier, search: Boolean, image: ImageVector?, 
  * Big enough to hit on a bumpy road, small enough that four rows plus a field plus a few results
  * still fit. A 480-tall screen sets the floor; a taller one (LIVI's 1280x720) gets bigger keys.
  */
-private fun keyHeight(screenHeightDp: Int): Dp = (screenHeightDp * 0.075f).dp.coerceIn(36.dp, 52.dp)
+private fun keyHeight(screenHeightDp: Int): Dp = (screenHeightDp * 0.09f).dp.coerceIn(44.dp, 64.dp)
 
-private val LocalKeyHeight = compositionLocalOf { 36.dp }
+private val LocalKeyHeight = compositionLocalOf { 44.dp }
 
 private val LETTER_ROWS = listOf(
     "qwertyuiop".map { it.toString() },

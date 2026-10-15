@@ -3,8 +3,10 @@ package app.seb3thehacker.gearslip.car
 import app.seb3thehacker.gearslip.car.theme.*
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.foundation.Image
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +31,7 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Warning
@@ -231,7 +234,9 @@ internal fun RightEdgeControls(
     // the first touch on one wakes them rather than pressing it.
     val awake = LocalMapControlsWake.current.awake
     val pan by CarServices.nav.panMode.collectAsState()
-    val visible = awake || pan
+    // Kept up while the knob is on one of them, or the ring would fade out along with the button.
+    var holdsFocus by remember { mutableStateOf(false) }
+    val visible = awake || pan || holdsFocus
     val alpha by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (visible) 1f else 0f,
         animationSpec = androidx.compose.animation.core.tween(if (visible) 150 else 500),
@@ -240,6 +245,7 @@ internal fun RightEdgeControls(
     Column(
         modifier
             .alpha(alpha)
+            .onFocusChanged { holdsFocus = it.hasFocus }
             .let { base ->
                 if (visible) base else base.pointerInput(Unit) {
                     awaitPointerEventScope {
@@ -468,7 +474,10 @@ internal fun CarGlyph(icon: CarIcon?, modifier: Modifier = Modifier, standard: I
         val white = remember(bitmap) { bitmap.isPlainWhite() }
         // Untinted white artwork is a template-app habit from dark surfaces; it is coloured like
         // text so it stays readable on a light one.
-        val tint = icon?.tint?.color(dark, content) ?: content.takeIf { white }
+        // An app's own tint is kept only if it can be seen: MAPS.ME asks for dark grey on dark
+        // buttons. Android Auto drops colours that fail contrast the same way.
+        val tint = icon?.tint?.color(dark, content)?.takeIf { it.readableOn(content) }
+            ?: content.takeIf { white || icon?.tint != null }
         Image(
             bitmap, contentDescription = null, modifier = modifier,
             colorFilter = tint?.let { ColorFilter.tint(it) },
@@ -587,14 +596,139 @@ internal fun PaneRows(pane: Pane?, modifier: Modifier = Modifier, autoStart: Boo
     // Some apps pad a pane with a row of blank strings; drawn, it is just a gap.
     val rows = pane?.rows.orEmpty().filterNot { it.isBlank() }
     val actions = pane?.actions.orEmpty().filter { it.isDrawable() }
+    val card = PlaceCard.of(rows)
     Column(modifier) {
-        rows.forEach { RowItem(it, large = true) }
+        card.heading?.let { PlaceHeading(it) }
+        if (card.buttons.isNotEmpty()) RowButtons(card.buttons, Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
         if (autoStart && actions.size == 1) {
             AutoStartButton(actions.single(), Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
         } else {
             ActionRow(actions, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), large = true)
         }
+        if (card.heading == null && card.buttons.isEmpty()) {
+            card.details.forEach { RowItem(it, large = true) }
+        } else {
+            card.details.forEach { DetailRow(it, card.heading?.title?.text().orEmpty()) }
+        }
     }
+}
+
+/**
+ * A pane split the way a place page reads: a name on top, the things to do with it as buttons,
+ * then the facts. Apps send all three as plain rows, so the split is worked out from the rows'
+ * shape alone. A pane that doesn't fit the shape - all of it tappable, like a menu - gets no
+ * heading and no buttons, and draws exactly as a plain list of rows.
+ */
+private class PlaceCard(val heading: CarRow?, val buttons: List<CarRow>, val details: List<CarRow>) {
+    companion object {
+        fun of(rows: List<CarRow>): PlaceCard {
+            // A short tappable row with an icon and nothing under it is a button in all but name:
+            // MAPS.ME's "Let's go" and "Save".
+            val buttons = rows.filter {
+                it.onClickDelegate != null && it.toggle == null && it.image != null &&
+                    it.texts.orEmpty().isEmpty() && it.title.text().length <= 24
+            }.takeIf { it.size in 1..4 && it.size < rows.size }.orEmpty()
+            // A first row that can't be tapped and has no icon is the place's name and kind.
+            val heading = rows.firstOrNull()?.takeIf {
+                buttons.isNotEmpty() && it.onClickDelegate == null && it.image == null && it.toggle == null
+            }
+            return PlaceCard(heading, buttons, rows - buttons.toSet() - listOfNotNull(heading).toSet())
+        }
+    }
+}
+
+@Composable
+private fun PlaceHeading(row: CarRow) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp)) {
+        Text(row.title.text(), style = ChromeType.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        row.texts.orEmpty().take(2).forEach {
+            Text(it.text(), style = ChromeType.body, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** Button-shaped rows side by side, the first one filled as the thing most drivers came to do. */
+@Composable
+private fun RowButtons(rows: List<CarRow>, modifier: Modifier) {
+    val scheme = MaterialTheme.colorScheme
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        rows.forEachIndexed { i, row ->
+            GsIconBox(
+                onClick = { row.onClickDelegate.click("row") },
+                modifier = Modifier.weight(1f),
+                colors = if (i == 0) GsColors(scheme.primary, scheme.onPrimary) else GsColors(scheme.surfaceContainerHighest, scheme.onSurface),
+                enabled = row.isEnabled,
+                shape = RoundedCornerShape(24.dp),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CarGlyph(row.image, Modifier.size(24.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(row.title.text(), style = ChromeType.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * One fact about a place, tighter than a list row: a small label over its value, or just the
+ * value when the row has no label. A phone number gets a Call button that asks first.
+ */
+@Composable
+private fun DetailRow(row: CarRow, placeName: String) {
+    val context = LocalContext.current
+    val texts = row.texts.orEmpty().map { it.text() }.filter { it.isNotBlank() }
+    val label = row.title.text().takeIf { texts.isNotEmpty() }
+    val values = texts.ifEmpty { listOf(row.title.text()) }
+    val number = values.firstOrNull { it.isPhoneNumber() }
+    val canCall = number != null &&
+        context.checkSelfPermission(android.Manifest.permission.CALL_PHONE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .let { if (row.onClickDelegate != null && row.isEnabled) it.clickable { row.onClickDelegate.click("row") } else it }
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        row.image?.let {
+            CarGlyph(it, Modifier.size(24.dp))
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            label?.let {
+                Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            values.take(3).forEach {
+                Text(it, style = ChromeType.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (canCall) {
+            Spacer(Modifier.width(8.dp))
+            GsIconBox(
+                onClick = { CallPrompt.ask(placeName.ifBlank { number!! }, number!!) },
+                colors = GsColors(MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.onPrimary),
+                shape = RoundedCornerShape(24.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Icon(Icons.Filled.Call, null, Modifier.size(20.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Call", style = ChromeType.body)
+                }
+            }
+        }
+        ActionRow(row.actions.orEmpty())
+    }
+}
+
+/** A line that is only a phone number: digits with the usual separators, 7 to 15 digits long. */
+private fun String.isPhoneNumber(): Boolean {
+    val t = trim()
+    if (!Regex("""^\+?[0-9 ().\-]+$""").matches(t)) return false
+    return t.count { it.isDigit() } in 7..15
 }
 
 @Composable
@@ -660,6 +794,17 @@ internal fun RowItem(row: CarRow, selection: RowSelection? = null, large: Boolea
 
 /** A row's place in a single-choice list: whether it is the chosen one, and what picking it does. */
 internal class RowSelection(val selected: Boolean, val onPick: () -> Unit)
+
+/**
+ * Whether this colour stands out against the background that [content] was chosen for: at least
+ * 3:1, the WCAG minimum for icons. The background is taken as the opposite of the content colour.
+ */
+private fun Color.readableOn(content: Color): Boolean {
+    val background = if (content.luminanceIsDark()) Color.White else Color(0xFF121212)
+    val a = luminance() + 0.05f
+    val b = background.luminance() + 0.05f
+    return maxOf(a, b) / minOf(a, b) >= 3f
+}
 
 internal fun Color.luminanceIsDark(): Boolean =
     (red * 0.299f + green * 0.587f + blue * 0.114f) < 0.5f

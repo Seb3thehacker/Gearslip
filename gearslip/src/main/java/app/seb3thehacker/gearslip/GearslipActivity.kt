@@ -8,13 +8,17 @@ import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.provider.Settings
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult
 import android.content.res.Configuration
@@ -45,6 +49,8 @@ class GearslipActivity : ComponentActivity(), Projection {
 
 
     private var descriptor: ParcelFileDescriptor? = null
+    /** The wireless session's socket, when the car came over Wi-Fi instead of USB. */
+    private var wirelessSocket: java.net.Socket? = null
     private var runner: GearslipRunner? = null
     private var screenProjector: ScreenProjector? = null
     private var worker: Thread? = null
@@ -72,7 +78,13 @@ class GearslipActivity : ComponentActivity(), Projection {
     private val audioPermission = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) askAudioCapture() else {
+        if (granted) askAudioCapture()
+        else if (!shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO)) {
+            // Refused twice: Android now says no without showing anything, so the phone must.
+            GearslipLog.w("audio: record permission blocked - Android no longer asks")
+            CarAudio.micBlocked()
+            micBlockedNotice.value = true
+        } else {
             GearslipLog.w("audio: record permission declined")
             CarAudio.denied()
         }
@@ -85,14 +97,22 @@ class GearslipActivity : ComponentActivity(), Projection {
         } else {
             GearslipLog.w("audio: capture consent declined")
             CarAudio.denied()
+            if (!CarSettings.audioChoiceAsked) offerBluetooth.value = true
         }
     }
+
+    /** Raised when the microphone permission is blocked; see [MicBlockedDialog]. */
+    private val micBlockedNotice = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+    /** Raised once, after the first "no" to the capture dialog; see [AudioChoiceDialog]. */
+    private val offerBluetooth = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     private val detachReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == UsbManager.ACTION_USB_ACCESSORY_DETACHED) {
                 GearslipLog.w("accessory detached")
-                closeAccessory()
+                // A wireless session has no accessory to lose; leave it running.
+                if (wirelessSocket == null) closeAccessory()
             }
         }
     }
@@ -115,6 +135,9 @@ class GearslipActivity : ComponentActivity(), Projection {
         GearslipLog.init(this)
         GearslipLog.installCrashHandler()
         GearslipLog.i("Gearslip ready")
+        app.seb3thehacker.gearslip.wireless.WirelessLink.onConnected = { socket ->
+            runOnUiThread { startWireless(socket) }
+        }
         CarSettings.init(this)
         AppSettings.applyGearslipEnabled(this)
         // A capture that died without tidying up would leave notifications exposed to every
@@ -127,7 +150,33 @@ class GearslipActivity : ComponentActivity(), Projection {
 
         setContent {
             GearslipTheme {
-                GearslipApp(onDisconnect = ::closeAccessory, onRequestCallScreening = ::requestCallScreeningRole)
+                GearslipApp(onDisconnect = { closeAccessory() }, onRequestCallScreening = ::requestCallScreeningRole)
+                val offer by offerBluetooth.collectAsState()
+                if (offer) {
+                    fun close() {
+                        CarSettings.markAudioChoiceAsked()
+                        offerBluetooth.value = false
+                    }
+                    app.seb3thehacker.gearslip.ui.AudioChoiceDialog(
+                        onUseBluetooth = {
+                            CarSettings.setPipeAudio(false)
+                            close()
+                        },
+                        onKeepAsking = ::close,
+                    )
+                }
+                val micNotice by micBlockedNotice.collectAsState()
+                if (micNotice) {
+                    app.seb3thehacker.gearslip.ui.MicBlockedDialog(
+                        onOpenSettings = {
+                            micBlockedNotice.value = false
+                            startActivity(
+                                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)),
+                            )
+                        },
+                        onDismiss = { micBlockedNotice.value = false },
+                    )
+                }
             }
         }
 
@@ -152,6 +201,11 @@ class GearslipActivity : ComponentActivity(), Projection {
         super.onStart()
         Prefetch.warm(this)
         UsageStats.onAppOpened(this)
+        app.seb3thehacker.gearslip.update.UpdateChecker.onAppOpened(this)
+        // Back from the app's settings with the microphone turned on: try car audio again.
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            CarAudio.micAllowed()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -161,6 +215,7 @@ class GearslipActivity : ComponentActivity(), Projection {
 
     override fun onDestroy() {
         super.onDestroy()
+        app.seb3thehacker.gearslip.wireless.WirelessLink.onConnected = null
         runCatching { unregisterReceiver(detachReceiver) }
         PhoneMirror.onStartRequested = null
         PhoneMirror.onTokenReady = null
@@ -296,16 +351,44 @@ class GearslipActivity : ComponentActivity(), Projection {
         worker = Thread { runner.run() }.apply { name = "gearslip"; start() }
     }
 
+    /** A wireless session: the same runner, on the socket [WirelessLink] opened to the car. */
+    private fun startWireless(socket: java.net.Socket) {
+        closeAccessory(stopWireless = false)
+        if (!AppSettings.gearslipEnabled(this)) {
+            GearslipLog.i("wireless: Gearslip is switched off - not connecting")
+            runCatching { socket.close() }
+            return
+        }
+        GearslipLog.i("wireless: starting a session over Wi-Fi to ${socket.inetAddress?.hostAddress}:${socket.port}")
+        wirelessSocket = socket
+        val runner = GearslipRunner(
+            input = socket.getInputStream(),
+            output = socket.getOutputStream(),
+            identityProvider = { CertProvider.load(this) },
+            projection = this,
+            vehicleProfileFor = { info -> VehicleProfiles.find(VehicleProfiles.load(this), info) },
+            wireless = true,
+        )
+        this.runner = runner
+        worker = Thread { runner.run() }.apply { name = "gearslip"; start() }
+    }
+
     private fun describe(accessory: UsbAccessory) {
         GearslipLog.i("accessory: manufacturer=${accessory.manufacturer} model=${accessory.model}")
         GearslipLog.i("           version=${accessory.version} description=${accessory.description}")
     }
 
-    private fun closeAccessory() {
+    private fun closeAccessory() = closeAccessory(stopWireless = true)
+
+    /** Ends the session, wired or wireless. [stopWireless] also drops the car's Bluetooth and Wi-Fi. */
+    private fun closeAccessory(stopWireless: Boolean) {
         runner?.stop()
         SessionReport.print()
         runCatching { descriptor?.close() }
         descriptor = null
+        runCatching { wirelessSocket?.close() }
+        wirelessSocket = null
+        if (stopWireless) app.seb3thehacker.gearslip.wireless.WirelessLink.stop(this)
         runner = null
     }
 
@@ -337,6 +420,8 @@ class GearslipActivity : ComponentActivity(), Projection {
     }
 
     override fun onProjectionStopped() {
+        // Before the car UI goes, while the media connection is still up.
+        app.seb3thehacker.gearslip.car.CarServices.pausePhoneMedia()
         runOnUiThread {
             PhoneMirror.requestStop()
             app.seb3thehacker.gearslip.car.CarKeys.focusSink = null

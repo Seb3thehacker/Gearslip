@@ -111,6 +111,21 @@ object ServiceDiscovery {
     }
 
     /**
+     * The channel the car takes "now playing" on (MediaPlaybackStatusService, Service field 9),
+     * which feeds its cluster and media screens. It carries no settings. Null when the car has none.
+     */
+    fun findMediaStatusChannel(response: ByteArray): Int? = findChannelWith(response, 9)
+
+    /** The instrument cluster's turn-by-turn channel (NavigationStatusService, Service field 8). */
+    fun findNavStatusChannel(response: ByteArray): Int? = findChannelWith(response, 8)
+
+    private fun findChannelWith(response: ByteArray, serviceField: Int): Int? =
+        Wire.allBytes(Wire.fields(response), 1).firstNotNullOfOrNull { channel ->
+            val service = Wire.fields(channel)
+            if (service.any { it.number == serviceField }) Wire.varint(service, 1)?.toInt() else null
+        }
+
+    /**
      * The car's microphone, from MediaSourceService (Service field 5):
      *   MediaSourceService { MediaCodecType available_type = 1; AudioConfiguration audio_config = 2;
      *                        bool available_while_in_call = 3; }
@@ -138,8 +153,45 @@ object ServiceDiscovery {
         return null
     }
 
+    /**
+     * The car's Bluetooth, from BluetoothService (Service field 6):
+     *   BluetoothService { string car_address = 1; repeated BluetoothPairingMethod methods = 2 [packed]; }
+     * Null when the car offers no pairing over the link.
+     */
+    class BluetoothService(val serviceId: Int, val carAddress: String, val pairingMethods: List<Int>)
+
+    /** A carmaker's own channel (service field 12), for its apps on the phone: GM's is "com.gm.vip". */
+    class VendorService(val serviceId: Int, val name: String)
+
+    fun findVendorServices(response: ByteArray): List<VendorService> =
+        Wire.allBytes(Wire.fields(response), 1).mapNotNull { channel ->
+            val service = Wire.fields(channel)
+            val id = Wire.varint(service, 1)?.toInt() ?: return@mapNotNull null
+            val fields = Wire.fields(Wire.bytes(service, 12) ?: return@mapNotNull null)
+            val name = Wire.bytes(fields, 1)?.let { String(it, Charsets.UTF_8) } ?: return@mapNotNull null
+            VendorService(id, name)
+        }
+
+    fun findBluetoothService(response: ByteArray): BluetoothService? {
+        for (channel in Wire.allBytes(Wire.fields(response), 1)) {
+            val service = Wire.fields(channel)
+            val id = Wire.varint(service, 1)?.toInt() ?: continue
+            val fields = Wire.fields(Wire.bytes(service, 6) ?: continue)
+            val address = Wire.bytes(fields, 1)?.let { String(it, Charsets.UTF_8) } ?: continue
+            // Packed as declared, though a car may send each method as its own varint.
+            val methods = fields.filter { it.number == 2 }.flatMap { f ->
+                f.bytes?.let(::packedVarints) ?: listOf(f.varint.toInt())
+            }
+            return BluetoothService(id, address, methods)
+        }
+        return null
+    }
+
+    const val STREAM_GUIDANCE = 1
     const val STREAM_MEDIA = 3
     const val CODEC_PCM = 1
+    const val CODEC_AAC_LC = 2
+    const val CODEC_AAC_LC_ADTS = 4
 
     private val STREAMS = mapOf(0 to "NONE", 1 to "GUIDANCE", 2 to "SYSTEM_AUDIO", 3 to "MEDIA", 4 to "TELEPHONY")
 

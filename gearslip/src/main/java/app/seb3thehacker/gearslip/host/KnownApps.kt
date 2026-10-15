@@ -18,6 +18,8 @@ object KnownApps {
         "com.vivi.vivimusic", // Vivi Music: browse, play, seek, works well
         "com.metrolist.music", // Metrolist: browse, play, works
         "nl.flitsmeister", // Flitsmeister: map, routing, alerts - works well
+        "com.mapquest.android.ace", // MapQuest: map, routing, navigation
+        "com.mapswithme.maps.pro", // MAPS.ME: map, search, place pages, navigation
     )
 
     fun works(packageName: String): Boolean = packageName in working
@@ -71,7 +73,6 @@ object KnownApps {
      */
     private val partial = setOf(
         "app.vela", // Vela Maps: connects and draws, but rough enough not to call it working yet
-        "com.mapquest.android.ace", // MapQuest: map, search and routing run, but not cleanly
         "com.spotify.music",        // Spotify: plays through Gearslip's player, but the app has to be opened on the phone first
         "deezer.android.app",       // Deezer: the same - it has to be opened on the phone first
     )

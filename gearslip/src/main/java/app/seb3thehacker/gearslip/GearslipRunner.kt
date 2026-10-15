@@ -3,6 +3,12 @@ package app.seb3thehacker.gearslip
 import android.os.Build
 import app.seb3thehacker.gearslip.audio.AudioLink
 import app.seb3thehacker.gearslip.audio.CarMic
+import app.seb3thehacker.gearslip.media.CarMediaStatus
+import app.seb3thehacker.gearslip.car.BluetoothAudioCheck
+import app.seb3thehacker.gearslip.car.LocationCheck
+import app.seb3thehacker.gearslip.car.CarBluetooth
+import app.seb3thehacker.gearslip.car.ClusterNav
+import app.seb3thehacker.gearslip.car.DirectionsVoice
 import app.seb3thehacker.gearslip.car.CarAssistant
 import app.seb3thehacker.gearslip.car.CarEnvironment
 import app.seb3thehacker.gearslip.car.CarKeys
@@ -33,6 +39,8 @@ class GearslipRunner(
     private val identityProvider: () -> CertProvider.Identity,
     private val projection: Projection? = null,
     private val vehicleProfileFor: (ServiceDiscovery.HeadUnitInfo) -> VehicleProfile? = { null },
+    /** Over Wi-Fi rather than USB: the video is sent smaller so the link keeps up. */
+    private val wireless: Boolean = false,
 ) {
     private val log = GearslipLog.tagged("PROTO")
 
@@ -43,10 +51,15 @@ class GearslipRunner(
     private lateinit var identityTask: FutureTask<PhoneTls>
 
     /** Sends every message, in order, so no other thread ever blocks on the USB link. See [send]. */
-    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "gearslip-writer") }
+    private val writer = java.util.concurrent.Executors.newSingleThreadExecutor {
+        // Sound goes out through here too, so it gets audio's priority: late writes are skips.
+        Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO); it.run() }, "gearslip-writer")
+    }
 
     /** Waits for the certificate only when TLS is first needed; see [run]. */
     private val tls: PhoneTls by lazy { identityTask.get() }
+    private var authenticationFailed = false
+    @Volatile private var stopped = false
 
     @Volatile private var state = State.WAIT_VERSION
     @Volatile private var lastProgress = System.currentTimeMillis()
@@ -68,8 +81,12 @@ class GearslipRunner(
     @Volatile private var inputChannelId: Int = -1
     @Volatile private var inputKeycodes: List<Int> = emptyList()
     @Volatile private var sensorChannelId: Int = -1
+    @Volatile private var mediaStatus: CarMediaStatus? = null
+    @Volatile private var clusterNav: ClusterNav? = null
     private var sensorTypes: List<Int> = emptyList()
     @Volatile private var audioLink: AudioLink? = null
+    @Volatile private var guidanceLink: AudioLink? = null
+    @Volatile private var vendorChannelId = -1
     private var audioMessagesSeen = 0
     private var touchWidth = 0
     private var touchHeight = 0
@@ -82,7 +99,9 @@ class GearslipRunner(
     @Volatile private var lastKeyframeSentAt = 0L
 
     fun run() {
-        SessionReport.begin()
+        // This thread reads the car's acks; audio waits on them, so it can't be left at the back.
+        android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO)
+        SessionReport.begin(wireless)
         log.i("--- session starting ---")
         SessionStatus.connecting("Connected to the head unit")
         log.i("device=${Build.MANUFACTURER} ${Build.MODEL}  android=${Build.VERSION.RELEASE} (sdk ${Build.VERSION.SDK_INT})")
@@ -107,6 +126,7 @@ class GearslipRunner(
         try {
             while (running) {
                 val read = input.read(chunk)
+                if (stopped) return
                 if (read < 0) {
                     log.w("head unit closed the connection (EOF) while in state $state")
                     reportDisconnect()
@@ -120,16 +140,19 @@ class GearslipRunner(
                 }
             }
         } catch (t: Throwable) {
+            if (stopped) return
             log.e("transport failed in state $state", t)
             SessionReport.fail(SessionReport.Category.USB, "transport failed", t, state.name)
             reportDisconnect()
         } finally {
             running = false
+            writer.shutdownNow()
             log.flush()
         }
     }
 
     fun stop() {
+        stopped = true
         running = false
         writer.shutdownNow()
         CarFocus.request = null
@@ -139,8 +162,17 @@ class GearslipRunner(
         videoSource = null
         audioLink?.close()
         audioLink = null
+        guidanceLink?.close()
+        guidanceLink = null
         CarSensors.clear()
         CarMic.current = null
+        CarBluetooth.onCarDisconnected()
+        BluetoothAudioCheck.onCarDisconnected()
+        LocationCheck.onCarDisconnected()
+        mediaStatus?.stop()
+        mediaStatus = null
+        clusterNav?.stop()
+        clusterNav = null
         lastSensorNight = null
         CarEnvironment.setSensorNight(null) // back to the clock until a car says otherwise
         projection?.onProjectionStopped()
@@ -148,6 +180,8 @@ class GearslipRunner(
     }
 
     private fun handleFrame(frame: Frames.Frame) {
+        // A rejected handshake cannot consume later messages as if authentication succeeded.
+        if (authenticationFailed || stopped) return
         val payload = if (frame.encrypted) {
             if (!tls.handshakeComplete) {
                 log.w("encrypted frame arrived before the handshake finished - ignoring")
@@ -176,6 +210,16 @@ class GearslipRunner(
                 onInputMessage(messageId, body)
             } else if (frame.channel == sensorChannelId) {
                 onSensorMessage(messageId, body)
+            } else if (frame.channel == clusterNav?.channelId) {
+                clusterNav?.onMessage(messageId, body)
+            } else if (frame.channel == mediaStatus?.channelId) {
+                mediaStatus?.onMessage(messageId, body)
+            } else if (frame.channel == guidanceLink?.channelId) {
+                guidanceLink?.onMessage(messageId, body)
+            } else if (frame.channel == CarBluetooth.channelId) {
+                CarBluetooth.onMessage(messageId, body)
+            } else if (frame.channel == vendorChannelId) {
+                onVendorMessage(messageId, body)
             } else if (frame.channel == CarMic.current?.channelId) {
                 CarMic.current?.onMessage(messageId, body)
             } else if (frame.channel == audioLink?.channelId) {
@@ -225,7 +269,7 @@ class GearslipRunner(
         }
         log.w("<- ByeByeRequest: reason=$reason ($name) in state $state")
         log.hex("   byebye raw", body)
-        SessionReport.fail(SessionReport.Category.BYEBYE, "ByeByeRequest reason=$reason ($name)", state.name)
+        SessionReport.fail(SessionReport.Category.BYEBYE, "ByeByeRequest reason=$reason ($name)", state.name, "bye $reason")
         send(MSG_BYEBYE_RESPONSE, ByteArray(0), encrypted = true)
         log.i("-> ByeByeResponse")
     }
@@ -240,11 +284,10 @@ class GearslipRunner(
         log.i("<- VersionRequest: head unit speaks $major.$minor")
         SessionReport.protocolVersion(major, minor)
 
-        // PROTOCOL-DOWNGRADE EXPERIMENT. The 2018 Uconnect speaks 1.3 and ACCEPTS the JVC cert;
-        // the 2025 unit speaks 4.3 and rejects it at AuthComplete (-3). If the 4.3 identity check
-        // is tied to the *negotiated* protocol version rather than baked into the firmware,
-        // claiming an older version makes the newer unit skip the check entirely. CLAIM_VERSION
-        // = null restores the previous echo-the-head-unit behaviour.
+        // Always 1.3, on purpose. Every car that accepts Gearslip was tested this way, 1.5 units
+        // included. Echoing the car's own version was tried too: a 4.3 unit rejected the
+        // certificate either way, so the version doesn't decide acceptance. The log says so, since
+        // a car offering 1.5 and getting 1.3 back looks like a bug to anyone reading it.
         val claim = CLAIM_VERSION ?: (major to minor)
         val response = byteArrayOf(
             ((claim.first shr 8) and 0xFF).toByte(), (claim.first and 0xFF).toByte(),
@@ -254,7 +297,10 @@ class GearslipRunner(
         send(MSG_VERSION_RESPONSE, response, encrypted = false)
         log.i(
             "-> VersionResponse: ${claim.first}.${claim.second} status=0 (STATUS_SUCCESS)" +
-                if (CLAIM_VERSION != null) " [FORCED; head unit offered $major.$minor]" else "",
+                if (CLAIM_VERSION != null && claim != (major to minor)) {
+                    " - intended: Gearslip always answers ${claim.first}.${claim.second}, which cars " +
+                        "offering $major.$minor accept too"
+                } else "",
         )
         state = State.TLS_HANDSHAKE
         SessionStatus.connecting("Securing the link")
@@ -262,10 +308,14 @@ class GearslipRunner(
     }
 
     private fun onHandshake(body: ByteArray) {
+        if (state != State.TLS_HANDSHAKE && state != State.WAIT_AUTH) return
         log.i("<- EncapsulatedSSL (${body.size} bytes)")
         val replies = try {
-            tls.pumpHandshake(body)
+            val preparedTls = tls
+            if (stopped) return
+            preparedTls.pumpHandshake(body)
         } catch (t: Throwable) {
+            if (stopped) return
             log.e("TLS handshake threw", t)
             SessionReport.fail(SessionReport.Category.TLS, "handshake threw", t, state.name)
             log.verdict(
@@ -278,9 +328,11 @@ class GearslipRunner(
                 "The head unit aborted the secure handshake. It validates the phone's certificate.",
             )
             state = State.DONE
+            authenticationFailed = true
             SessionReport.print()
             return
         }
+        if (stopped) return
         replies.forEach {
             send(MSG_ENCAPSULATED_SSL, it, encrypted = false)
             log.i("-> EncapsulatedSSL (${it.size} bytes)")
@@ -293,6 +345,7 @@ class GearslipRunner(
 
     private fun onAuthComplete(body: ByteArray) {
         val status = Protobuf.readInt32Field(body, 1)
+        if (state != State.WAIT_AUTH && !(state == State.TLS_HANDSHAKE && status in listOf(-2, -3))) return
         log.i("<- AuthComplete: status=$status")
         status?.let { SessionReport.auth(it) }
 
@@ -304,7 +357,7 @@ class GearslipRunner(
                 sendServiceDiscoveryRequest()
             }
             -2 -> {
-                SessionReport.fail(SessionReport.Category.CERTIFICATE, "AuthComplete status -2 (certificate error)", state.name)
+                SessionReport.fail(SessionReport.Category.CERTIFICATE, "AuthComplete status -2 (certificate error)", state.name, "auth -2")
                 log.verdict(
                     "NOT VIABLE (STATUS_CERTIFICATE_ERROR)",
                     "The head unit explicitly rejected the phone's self-signed certificate. " +
@@ -316,9 +369,10 @@ class GearslipRunner(
                     "The head unit refused the phone's certificate (certificate error).",
                 )
                 state = State.DONE
+                authenticationFailed = true
             }
             -3 -> {
-                SessionReport.fail(SessionReport.Category.AUTH, "AuthComplete status -3 (authentication failure)", state.name)
+                SessionReport.fail(SessionReport.Category.AUTH, "AuthComplete status -3 (authentication failure)", state.name, "auth -3")
                 log.verdict(
                     "NOT VIABLE (STATUS_AUTHENTICATION_FAILURE)",
                     "Authentication rejected. Broader than a pure certificate error, but the " +
@@ -329,9 +383,10 @@ class GearslipRunner(
                     "Authentication failed. The head unit does not trust the certificate in use.",
                 )
                 state = State.DONE
+                authenticationFailed = true
             }
             else -> {
-                SessionReport.fail(SessionReport.Category.AUTH, "AuthComplete status $status (unexpected)", state.name)
+                SessionReport.fail(SessionReport.Category.AUTH, "AuthComplete status $status (unexpected)", state.name, "auth $status")
                 log.verdict(
                     "INCONCLUSIVE (AuthComplete status=$status)",
                     "Unexpected status. Check MessageStatus.proto in aasdk for the meaning " +
@@ -339,6 +394,7 @@ class GearslipRunner(
                 )
                 SessionStatus.failed("Unexpected response", "The head unit answered authentication with status $status.")
                 state = State.DONE
+                authenticationFailed = true
             }
         }
     }
@@ -399,7 +455,7 @@ class GearslipRunner(
         val video = ServiceDiscovery.findVideoService(serviceDiscoveryResponse)
         if (video == null) {
             log.w("no video service in the discovery response - cannot start Phase A")
-            SessionReport.fail(SessionReport.Category.VIDEO, "head unit advertised no video service", state.name)
+            SessionReport.fail(SessionReport.Category.VIDEO, "head unit advertised no video service", state.name, "no video service")
             return
         }
         videoChannelId = video.serviceId
@@ -415,8 +471,13 @@ class GearslipRunner(
 
         openChannel(video.serviceId)
         startAudioChannel(serviceDiscoveryResponse)
+        startGuidanceChannel(serviceDiscoveryResponse)
         startSensorChannel(serviceDiscoveryResponse)
         startMicChannel(serviceDiscoveryResponse)
+        startMediaStatusChannel(serviceDiscoveryResponse)
+        startClusterNavChannel(serviceDiscoveryResponse)
+        startBluetooth(serviceDiscoveryResponse)
+        startVendorChannel(serviceDiscoveryResponse)
 
         val input = ServiceDiscovery.findInputService(serviceDiscoveryResponse, video.displayId)
         if (input == null) {
@@ -434,7 +495,7 @@ class GearslipRunner(
         }
     }
 
-    /** Media audio rides its own sink; guidance, system and telephony sinks are left closed. */
+    /** Media audio rides its own sink; spoken directions take the guidance sink, and system and telephony stay closed. */
     private fun startAudioChannel(serviceDiscoveryResponse: ByteArray) {
         val sinks = ServiceDiscovery.findAudioServices(serviceDiscoveryResponse)
         sinks.forEach { sink ->
@@ -451,7 +512,7 @@ class GearslipRunner(
             return
         }
         if (media.codecType != ServiceDiscovery.CODEC_PCM) {
-            log.w("the car offers no PCM media sink, only ${media.codecName}; it may play our PCM as silence")
+            log.w("the car offers no PCM media sink, only ${media.codecName}; music goes as AAC")
         }
         val first = media.configs.firstOrNull()
         SessionReport.audio(
@@ -462,8 +523,32 @@ class GearslipRunner(
             media,
             sendOnChannel = { id, body -> send(id, body, encrypted = true, channel = media.serviceId) },
             sendControl = { id, body -> send(id, body, encrypted = true) },
+            // The driver picked the radio or another source on the car: pause the phone's music
+            // as Android Auto does, instead of letting it play on to no one.
+            onTakenBack = { CarServices.pausePhoneMedia("the car switched to another source") },
         )
         openChannel(media.serviceId)
+    }
+
+    /** The car's directions channel, where [DirectionsVoice] reads out each turn. */
+    private fun startGuidanceChannel(serviceDiscoveryResponse: ByteArray) {
+        val guidance = ServiceDiscovery.findAudioServices(serviceDiscoveryResponse)
+            .filter { it.streamType == ServiceDiscovery.STREAM_GUIDANCE }
+            .firstOrNull { it.codecType == ServiceDiscovery.CODEC_PCM } ?: run {
+            log.i("no PCM directions sink - turns won't be spoken")
+            return
+        }
+        guidanceLink = AudioLink(
+            guidance,
+            sendOnChannel = { id, body -> send(id, body, encrypted = true, channel = guidance.serviceId) },
+            sendControl = { id, body -> send(id, body, encrypted = true) },
+            tag = "guidance",
+            sessionId = GUIDANCE_SESSION_ID,
+            asksFocus = false,
+            onReady = { DirectionsVoice.attach(it) },
+            onClose = { DirectionsVoice.detach(it) },
+        )
+        openChannel(guidance.serviceId)
     }
 
     /** The car's microphone, for voice: opened now, recording only while something listens. */
@@ -474,8 +559,73 @@ class GearslipRunner(
         }
         val config = mic.configs.first()
         log.i("car microphone: channel=${mic.serviceId} ${mic.codecName} ${config.sampleRate}Hz/${config.bits}bit/x${config.channels}")
-        CarMic.current = CarMic(mic) { id, body -> send(id, body, encrypted = true, channel = mic.serviceId) }
+        CarMic.current = CarMic(
+            mic,
+            sendOnChannel = { id, body -> send(id, body, encrypted = true, channel = mic.serviceId) },
+            // VoiceSessionNotification { status = 1 START, 2 END }, on the control channel.
+            voiceSession = { start ->
+                send(MSG_VOICE_SESSION_NOTIFICATION, Protobuf.varintField(1, if (start) 1L else 2L), encrypted = true)
+            },
+        )
         openChannel(mic.serviceId)
+    }
+
+    /** What's playing, for the car's own screens: the cluster, the media source page. */
+    private fun startMediaStatusChannel(serviceDiscoveryResponse: ByteArray) {
+        val channel = ServiceDiscovery.findMediaStatusChannel(serviceDiscoveryResponse) ?: run {
+            log.i("no media status channel - the car's own screens won't show what's playing")
+            return
+        }
+        log.i("media status channel: $channel")
+        mediaStatus = CarMediaStatus(channel) { id, body -> send(id, body, encrypted = true, channel = channel) }
+        openChannel(channel)
+    }
+
+    /** Bluetooth pairing, for calls: the channel only opens if the driver asks to pair. */
+    /**
+     * GM's own channel ("com.gm.vip"), opened in GM cars only. Issue #18: a 2021 Bolt ends every
+     * session about 25 s in, and of the channels it offers, this is the one a Dacia that stays
+     * connected doesn't have. What GM sends on it is private, so Gearslip only opens it and logs
+     * what arrives, by message id and size.
+     */
+    private fun startVendorChannel(serviceDiscoveryResponse: ByteArray) {
+        val vendors = ServiceDiscovery.findVendorServices(serviceDiscoveryResponse)
+        vendors.forEach { log.i("vendor channel ${it.serviceId}: ${it.name}") }
+        val gm = vendors.firstOrNull { it.name.startsWith("com.gm.") } ?: return
+        vendorChannelId = gm.serviceId
+        log.i("-> ChannelOpenRequest on GM's channel ${gm.serviceId}")
+        openChannel(gm.serviceId)
+    }
+
+    private fun onVendorMessage(messageId: Int, body: ByteArray) {
+        if (messageId == MSG_CHANNEL_OPEN_RESPONSE) {
+            log.i("<- GM channel open: status=${Protobuf.readInt32Field(body, 1) ?: 0}")
+        } else {
+            log.i("<- GM channel message id=$messageId (${body.size} bytes)")
+        }
+    }
+
+    private fun startBluetooth(serviceDiscoveryResponse: ByteArray) {
+        val bluetooth = ServiceDiscovery.findBluetoothService(serviceDiscoveryResponse) ?: run {
+            log.i("no Bluetooth service - the car can't be paired from here")
+            return
+        }
+        CarBluetooth.onCarConnected(
+            bluetooth,
+            open = { openChannel(bluetooth.serviceId) },
+            send = { id, body -> send(id, body, encrypted = true, channel = bluetooth.serviceId) },
+        )
+    }
+
+    /** Turn-by-turn for the instrument cluster: the next turn, its road, and how far. */
+    private fun startClusterNavChannel(serviceDiscoveryResponse: ByteArray) {
+        val channel = ServiceDiscovery.findNavStatusChannel(serviceDiscoveryResponse) ?: run {
+            log.i("no navigation status channel - the cluster won't show turns")
+            return
+        }
+        log.i("navigation status channel: $channel")
+        clusterNav = ClusterNav(channel) { id, body -> send(id, body, encrypted = true, channel = channel) }
+        openChannel(channel)
     }
 
     /**
@@ -599,8 +749,8 @@ class GearslipRunner(
      * right-hand third of the screen away entirely - taps on a right-edge button landed on
      * the middle one. The head unit maps its own panel onto our video before reporting.
      *
-     * So: inject as-is, clamped to the video bounds. The advertised touchscreen size is kept
-     * only for diagnostics.
+     * So: inject them unscaled, shifted past the cropped margin (see below) and clamped to the
+     * video. The advertised touchscreen size is kept only for diagnostics.
      */
     private fun onInputMessage(messageId: Int, body: ByteArray) {
         when (messageId) {
@@ -631,13 +781,20 @@ class GearslipRunner(
                 val action = Wire.varint(touchFields, 3)?.toInt() ?: 0
                 val pointers = Wire.allBytes(touchFields, 1)
                 if (pointers.isEmpty()) return
-                val size = videoConfigs.getOrNull(selectedConfigIndex ?: 0)?.pixelSize()
+                val config = videoConfigs.getOrNull(selectedConfigIndex ?: 0)
+                val size = config?.pixelSize()
+                // The car crops its margin off the frame and measures taps from the corner of what
+                // it shows, so they come in short by half the margin: the 2024 VW (margin 240) sent
+                // y=6, which is inside the cropped band, and the Uconnect's never passed 351 on a
+                // 480-high frame with a 130 margin. Without this every tap landed 120 px too high
+                // and the VW couldn't press past its first screen.
+                val shift = config?.marginInsets() ?: Insets.NONE
                 val points = pointers.mapIndexedNotNull { index, pointer ->
                     val fields = Wire.fields(pointer)
                     val rawX = Wire.varint(fields, 1)?.toInt() ?: return@mapIndexedNotNull null
                     val rawY = Wire.varint(fields, 2)?.toInt() ?: return@mapIndexedNotNull null
                     val id = Wire.varint(fields, 3)?.toInt() ?: index
-                    TouchPoint(id, clamp(rawX, size?.first), clamp(rawY, size?.second))
+                    TouchPoint(id, clamp(rawX + shift.left, size?.first), clamp(rawY + shift.top, size?.second))
                 }
                 if (points.isEmpty()) return
                 val actionIndex = (Wire.varint(touchFields, 2)?.toInt() ?: 0).coerceIn(0, points.size - 1)
@@ -795,13 +952,17 @@ class GearslipRunner(
     /**
      * The offered config that best fills the car's screen: the smallest whose visible width
      * reaches most of the touchscreen's, else the largest there is. Always taking the smallest
-     * put 800x480 on a 1540x720 Audi screen and stretched it. With no touchscreen size to go
-     * by, the smallest is still the safe choice.
+     * put 800x480 on a 1540x720 Audi screen and stretched it. A car that gives no touchscreen
+     * size gets the largest up to 1080p: a car only offers sizes it can show, and the 2024 VW
+     * (touchscreen 0x0) blurred 800x480 across a 1080p screen.
      */
     private fun fitToScreen(offered: List<Int>): Int? {
         val known = offered.filter { videoConfigs.getOrNull(it)?.pixelSize() != null }
         fun pixels(idx: Int) = videoConfigs[idx].pixelCount()
-        if (touchWidth <= 0) return known.minByOrNull(::pixels)
+        if (touchWidth <= 0) {
+            return known.filter { pixels(it) <= 1920 * 1080 }.maxByOrNull(::pixels)
+                ?: known.minByOrNull(::pixels)
+        }
         val wide = known.filter { (videoConfigs[it].visibleSize()?.first ?: 0) >= touchWidth * 8 / 10 }
         return wide.minByOrNull(::pixels) ?: known.maxByOrNull(::pixels)
     }
@@ -836,8 +997,10 @@ class GearslipRunner(
         videoSource = VideoSource(
             width = width,
             height = height,
-            frameRate = if (config.frameRate == 1) 60 else 30,
+            // 60fps only over a cable: over Wi-Fi it doubles the data for little the driver sees.
+            frameRate = if (config.frameRate == 1 && !wireless) 60 else 30,
             mode = if (useProjection) VideoSource.Mode.SURFACE else VideoSource.Mode.TEST_CARD,
+            wireless = wireless,
             onCodecConfig = { csd ->
                 lastCodecConfig = csd
                 send(MSG_MEDIA_CODEC_CONFIG, csd, encrypted = true, channel = videoChannelId)
@@ -854,6 +1017,8 @@ class GearslipRunner(
                 if (projection != null && surface != null) {
                     projection.onSurfaceReady(surface, width, height, config.density)
                     SessionStatus.projecting()
+                    BluetoothAudioCheck.onProjecting()
+                    LocationCheck.onProjecting()
                 }
             }.onFailure { e -> log.e("encoder start failed", e) }
         }
@@ -1065,10 +1230,10 @@ class GearslipRunner(
 
     private fun reportDisconnect() {
         when (state) {
-            State.WAIT_VERSION -> SessionReport.fail(SessionReport.Category.NO_HANDSHAKE, "no VersionRequest arrived", state.name)
-            State.TLS_HANDSHAKE -> SessionReport.fail(SessionReport.Category.TLS, "head unit dropped the link during TLS", state.name)
-            State.WAIT_AUTH -> SessionReport.fail(SessionReport.Category.AUTH, "dropped after TLS, before AuthComplete", state.name)
-            State.WAIT_SDR -> SessionReport.fail(SessionReport.Category.SERVICE_DISCOVERY, "accepted, then dropped before service discovery", state.name)
+            State.WAIT_VERSION -> SessionReport.fail(SessionReport.Category.NO_HANDSHAKE, "no VersionRequest arrived", state.name, "closed")
+            State.TLS_HANDSHAKE -> SessionReport.fail(SessionReport.Category.TLS, "head unit dropped the link during TLS", state.name, "closed")
+            State.WAIT_AUTH -> SessionReport.fail(SessionReport.Category.AUTH, "dropped after TLS, before AuthComplete", state.name, "closed")
+            State.WAIT_SDR -> SessionReport.fail(SessionReport.Category.SERVICE_DISCOVERY, "accepted, then dropped before service discovery", state.name, "closed")
             State.DONE -> {}
         }
         when (state) {
@@ -1155,9 +1320,9 @@ class GearslipRunner(
 
     private companion object {
         /**
-         * Force the protocol version Gearslip claims in VersionResponse, as (major, minor), or
-         * null to echo the head unit. 1.3 is what the 2018 Uconnect (which accepts the JVC cert)
-         * speaks. This is the 2025 identity-check downgrade experiment: see onVersionRequest.
+         * The protocol version Gearslip answers every car with, as (major, minor), or null to echo
+         * the head unit's. Kept at 1.3 because every working car was tested with it; see
+         * onVersionRequest.
          */
         val CLAIM_VERSION: Pair<Int, Int>? = 1 to 3
 
@@ -1172,6 +1337,7 @@ class GearslipRunner(
         const val MSG_PING_RESPONSE = 12
         const val MSG_BYEBYE_REQUEST = 15
         const val MSG_BYEBYE_RESPONSE = 16
+        const val MSG_VOICE_SESSION_NOTIFICATION = 17
         const val MSG_CHANNEL_OPEN_REQUEST = 7
         const val MSG_CHANNEL_OPEN_RESPONSE = 8
 
@@ -1212,6 +1378,7 @@ class GearslipRunner(
 
         const val ACK_STALL_MS = 2_000L
         const val AUDIO_TRACE_MESSAGES = 6
+        const val GUIDANCE_SESSION_ID = 1
         const val PERIODIC_KEYFRAME_MS = 5_000L
     }
 }

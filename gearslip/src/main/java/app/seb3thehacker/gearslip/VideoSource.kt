@@ -23,6 +23,8 @@ class VideoSource(
     private val height: Int,
     private val frameRate: Int,
     private val mode: Mode = Mode.TEST_CARD,
+    /** Over Wi-Fi: a fraction of the cable bitrate, so the link keeps up and sound isn't starved. */
+    private val wireless: Boolean = false,
     private val onCodecConfig: (ByteArray) -> Unit,
     private val onFrame: (data: ByteArray, presentationTimeUs: Long, keyFrame: Boolean) -> Unit,
 ) {
@@ -45,7 +47,10 @@ class VideoSource(
     private var frameIndex = 0L
 
     fun start() {
-        val bitRate = (width.toLong() * height * frameRate * BITS_PER_PIXEL).toInt().coerceIn(MIN_BIT_RATE, MAX_BIT_RATE)
+        val level = levelFor(width, height, frameRate)
+        val bitRate = defaultBitRate(width, height, frameRate, level).let {
+            if (wireless) (it * WIRELESS_SHARE).toInt().coerceAtMost(WIRELESS_MAX_BIT_RATE) else it
+        }
         fun format(tuned: Boolean) = MediaFormat.createVideoFormat(MIME, width, height).apply {
             setInteger(
                 MediaFormat.KEY_COLOR_FORMAT,
@@ -74,7 +79,7 @@ class VideoSource(
                 setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER, frameRate.toFloat())
             }
             setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
-            setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31)
+            setInteger(MediaFormat.KEY_LEVEL, level.codecLevel)
             if (tuned) {
                 // Hints only: a car screen wants each frame now, not the best frame a moment later.
                 setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
@@ -98,7 +103,7 @@ class VideoSource(
         codec = encoder
         running = true
 
-        log.i("encoder started: ${width}x$height @ ${frameRate}fps, ${bitRate / 1000} kbps, H.264 Baseline, mode=$mode")
+        log.i("encoder started: ${width}x$height @ ${frameRate}fps, ${bitRate / 1000} kbps${if (wireless) " (wireless)" else ""}, H.264 Baseline level ${level.label}, mode=$mode")
 
         worker = Thread {
             runCatching { pump(encoder) }
@@ -223,10 +228,48 @@ class VideoSource(
         const val TIMEOUT_US = 10_000L
         const val SURFACE_TIMEOUT_US = 100_000L
 
-        /** Enough for sharp text and map lines; 800x480 at 30fps comes out at 4 Mbps. */
-        const val BITS_PER_PIXEL = 0.3
-        const val MIN_BIT_RATE = 4_000_000
-        const val MAX_BIT_RATE = 12_000_000
+        /**
+         * 800x480 at 30fps gets 8 Mbps: about the most that size can show, enough that a moving
+         * video in the browser stays sharp. Bigger screens get more, but less than in proportion,
+         * since large frames compress better: bitrate grows with pixels^0.75. 60fps gets 1.5x,
+         * because frames that close together are mostly alike.
+         */
+        const val BASE_BIT_RATE = 8_000_000.0
+        const val BASE_PIXELS = 800.0 * 480
+        /** No car's decoder is asked for more than this, whatever its level allows. */
+        const val MAX_BIT_RATE = 25_000_000
+
+        /**
+         * The H.264 levels a car screen can need, smallest first: macroblocks a second each
+         * decodes, and the Baseline bitrate it must handle. The encoder declares the smallest
+         * that fits, and the bitrate stays within it, so a car decoder isn't asked for more than
+         * the level it was told about.
+         */
+        enum class Level(val label: String, val codecLevel: Int, val macroblocksPerSecond: Int, val maxBitRate: Int) {
+            L31("3.1", MediaCodecInfo.CodecProfileLevel.AVCLevel31, 108_000, 14_000_000),
+            L32("3.2", MediaCodecInfo.CodecProfileLevel.AVCLevel32, 216_000, 20_000_000),
+            L4("4", MediaCodecInfo.CodecProfileLevel.AVCLevel4, 245_760, 20_000_000),
+            L42("4.2", MediaCodecInfo.CodecProfileLevel.AVCLevel42, 522_240, 50_000_000),
+        }
+
+        fun levelFor(width: Int, height: Int, frameRate: Int): Level {
+            val perSecond = ((width + 15) / 16) * ((height + 15) / 16) * frameRate
+            return Level.entries.firstOrNull { perSecond <= it.macroblocksPerSecond } ?: Level.L42
+        }
+
+        fun defaultBitRate(width: Int, height: Int, frameRate: Int, level: Level): Int {
+            val size = Math.pow(width.toDouble() * height / BASE_PIXELS, 0.75)
+            val rate = if (frameRate > 30) 1.5 else 1.0
+            return (BASE_BIT_RATE * size * rate).toInt().coerceAtMost(minOf(level.maxBitRate, MAX_BIT_RATE))
+        }
+        /**
+         * A car's Wi-Fi is shared, noisy and far slower than its nominal rate, and the sound rides
+         * the same link behind the video. Real Android Auto sends a few Mbps wirelessly; at the
+         * cable rate (15-20 Mbps for 720p) a laptop hotspot fell seconds behind and the music
+         * cut in and out. 720p30 comes out near 5.4 Mbps.
+         */
+        const val WIRELESS_SHARE = 0.35
+        const val WIRELESS_MAX_BIT_RATE = 8_000_000
         const val I_FRAME_INTERVAL_S = 5
         private const val REPEAT_AFTER_US = 100_000L
 

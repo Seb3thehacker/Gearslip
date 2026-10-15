@@ -53,14 +53,16 @@ fun CarSettingsScreen() {
     val units by CarSettings.units.collectAsState()
     val whatsNew by CarSettings.whatsNewAfterUpdates.collectAsState()
     val pipeAudio by CarSettings.pipeAudio.collectAsState()
+    val speakDirections by CarSettings.speakDirections.collectAsState()
+    val bluetoothWarning by CarSettings.bluetoothWarning.collectAsState()
+    val locationWarning by CarSettings.locationWarning.collectAsState()
     val autoplay by CarSettings.autoplay.collectAsState()
     val playerTitle by CarSettings.playerTitle.collectAsState()
     val theme by CarSettings.appTheme.collectAsState()
     val uiTheme by CarSettings.uiTheme.collectAsState()
     val experimentalFeatures by CarSettings.experimentalFeaturesEnabled.collectAsState()
-    val voiceAssistant by CarSettings.voiceAssistantEnabled.collectAsState()
     val carSensors by CarSettings.carSensorsEnabled.collectAsState()
-    val mediaSearch by CarSettings.mediaSearchEnabled.collectAsState()
+    val systemSpeech by CarSettings.systemSpeech.collectAsState()
     val display by CarEnvironment.display.collectAsState()
     val vehicle by CarEnvironment.vehicle.collectAsState()
     val context = LocalContext.current
@@ -126,17 +128,49 @@ fun CarSettingsScreen() {
         ) { CarSettings.setAutoplay(it) }
 
         ChoiceRow(
-            "Media audio",
-            listOf(false to "Phone audio", true to "Car audio"),
+            "Car audio",
+            listOf(false to "Bluetooth", true to "USB"),
             pipeAudio,
         ) { CarSettings.setPipeAudio(it) }
         Text(
-            "Car audio sends the phone's sound to the car over USB. Android asks for permission " +
-                "when the car connects, and a few apps block it. Phone audio plays as the phone " +
-                "normally would, for example over Bluetooth to the car.",
+            "USB sends the phone's sound through Gearslip. Android asks to share your screen each " +
+                "drive, and a few apps block it. Bluetooth plays as the phone normally would, and " +
+                "Android never asks.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (!pipeAudio) {
+            ChoiceRow(
+                "Warn when Bluetooth isn't connected",
+                listOf(false to "Off", true to "On"),
+                bluetoothWarning,
+            ) { CarSettings.setBluetoothWarning(it) }
+        }
+        ChoiceRow(
+            "Warn when location is off",
+            listOf(false to "Off", true to "On"),
+            locationWarning,
+        ) { CarSettings.setLocationWarning(it) }
+
+        ChoiceRow(
+            "Spoken directions",
+            listOf(false to "Off", true to "On"),
+            speakDirections,
+        ) { CarSettings.setSpeakDirections(it) }
+        Text(
+            "Gearslip reads each turn aloud through the car's speakers, and the music dips while it " +
+                "speaks. Turn it off if your map app's own voice already plays in the car.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        ExperimentalFeatureRow(
+            title = "Use the phone's speech recognition",
+            description = "Listens through the phone's own speech service instead of Gearslip's. On " +
+                "most phones that's Google's, which may send your voice to Google. GrapheneOS has " +
+                "none, so Gearslip keeps using its own.",
+            checked = systemSpeech,
+        ) { CarSettings.setSystemSpeech(it) }
 
         WebPageSetting()
 
@@ -148,7 +182,7 @@ fun CarSettingsScreen() {
             experimentalFeatures,
         ) { CarSettings.setExperimentalFeaturesEnabled(it) }
         if (experimentalFeatures) {
-            ExperimentalFeaturesList(voiceAssistant, carSensors, mediaSearch)
+            ExperimentalFeaturesList(carSensors)
         }
 
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -205,21 +239,11 @@ private fun <T> ChoiceRow(title: String, options: List<Pair<T, String>>, selecte
  * so the list reads fine whether there's one entry or several.
  */
 @Composable
-private fun ExperimentalFeaturesList(voiceAssistant: Boolean, carSensors: Boolean, mediaSearch: Boolean) {
+private fun ExperimentalFeaturesList(carSensors: Boolean) {
     Column(
         Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        ExperimentalFeatureRow(
-            title = "Voice assistant",
-            description = "Push-to-talk and the car's voice button start listening: navigate, " +
-                "play media, call, or open an app by saying so. Can mishear you or act on the " +
-                "wrong command - keep your eyes on the road, and confirm anything it does " +
-                "before you rely on it.",
-            warning = true,
-            checked = voiceAssistant,
-        ) { CarSettings.setVoiceAssistantEnabled(it) }
-
         ExperimentalFeatureRow(
             title = "Vehicle data",
             description = "Adds a Vehicle data tile: a live, raw dump of the head unit's sensor " +
@@ -228,13 +252,6 @@ private fun ExperimentalFeaturesList(voiceAssistant: Boolean, carSensors: Boolea
                 "guess, not a fact, until you've watched one change for yourself.",
             checked = carSensors,
         ) { CarSettings.setCarSensorsEnabled(it) }
-
-        ExperimentalFeatureRow(
-            title = "Media search",
-            description = "Adds a search button to the media screen. Some apps ignore the search " +
-                "or play something else.",
-            checked = mediaSearch,
-        ) { CarSettings.setMediaSearchEnabled(it) }
     }
 }
 
@@ -272,7 +289,7 @@ private fun ExperimentalFeatureRow(
     }
 }
 
-/** The URL (or raw HTML) the Web app shows. Edited with [CarKeyboard] - no phone in hand needed. */
+/** The URL (or raw HTML) the Browser app shows. Edited with [CarKeyboard] - no phone in hand needed. */
 @Composable
 private fun WebPageSetting() {
     val context = LocalContext.current
@@ -297,7 +314,7 @@ private fun WebPageSetting() {
             )
         }
         Text(
-            "Shown by the Web app on the launcher. Applies on the next connection.",
+            "Shown by the Browser app on the launcher. Applies on the next connection.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )

@@ -40,7 +40,19 @@ class MediaEntry(
 )
 
 /** [icon] is a drawable id inside the media app's own package, not Gearslip's; 0 for none. */
-class CustomAction(val id: String, val name: String, val extras: Bundle?, val icon: Int = 0)
+class CustomAction(val id: String, val name: String, val extras: Bundle?, val icon: Int = 0, val iconName: String = "") {
+    /**
+     * Whether a toggle like heart or shuffle is on, read from the icon's name - Tidal swaps
+     * ic_favorite for ic_favorite_filled and ic_shuffle for ic_shuffle_active, and keeps the
+     * button's name the same. Whole words only, so "inactive" doesn't count as "active".
+     */
+    val on: Boolean
+        get() = iconName.lowercase().split('_', '.', '-').any { it in ON_WORDS }
+
+    private companion object {
+        val ON_WORDS = setOf("filled", "fill", "active", "on", "selected", "checked", "enabled", "solid", "one", "all")
+    }
+}
 
 /** One entry in the app's own queue - not its library, whatever it has lined up to play next. */
 class QueueTrack(
@@ -156,6 +168,9 @@ class CarMedia(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
     private var connecting: MediaApp? = null
 
+    /** The music app Gearslip is attached to, for the assistant to name; null when there's none. */
+    val appLabel: String? get() = connecting?.label?.takeIf { controller != null }
+
     private val _phase = MutableStateFlow(Phase.IDLE)
     val phase: StateFlow<Phase> = _phase.asStateFlow()
 
@@ -225,7 +240,11 @@ class CarMedia(private val context: Context) {
 
     private fun refreshModes() {
         val c = compat
-        _modes.value = if (c == null) Modes() else Modes(shuffle = c.shuffleMode, repeat = c.repeatMode)
+        val modes = if (c == null) Modes() else Modes(shuffle = c.shuffleMode, repeat = c.repeatMode)
+        if (modes.shuffle != _modes.value.shuffle || modes.repeat != _modes.value.repeat) {
+            GearslipLog.i("media: shuffle mode ${modes.shuffle}, repeat mode ${modes.repeat}, rating type ${controller?.ratingType}")
+        }
+        _modes.value = modes
     }
     private var subscribed: String? = null
     private var rootId: String? = null
@@ -236,6 +255,12 @@ class CarMedia(private val context: Context) {
         connecting = app
         _phase.value = Phase.CONNECTING
         _browse.value = BrowseState()
+        // Known to refuse its library (Spotify): asking only costs the seconds it takes to say no,
+        // so go straight to its playback session.
+        if (KnownApps.playerWorks(app.component.packageName)) {
+            attachToSession(app)
+            return
+        }
         val mb = MediaBrowser(context, app.component, object : MediaBrowser.ConnectionCallback() {
             override fun onConnected() = this@CarMedia.onConnected(app)
             override fun onConnectionFailed() {
@@ -248,10 +273,20 @@ class CarMedia(private val context: Context) {
             }
         }, null)
         browser = mb
+        GearslipLog.i("media: connecting to ${app.label}'s library")
         runCatching { mb.connect() }.onFailure {
             GearslipLog.e("media: connect threw", it)
             _phase.value = Phase.REJECTED
         }
+        // An app that never answers would leave the player spinning, and every later tap on it
+        // would only reopen that spinner. Give up on the library and drive its playback instead.
+        main.postDelayed({
+            if (browser !== mb || _phase.value != Phase.CONNECTING) return@postDelayed
+            GearslipLog.w("media: ${app.label} didn't answer in ${CONNECT_WAIT_MS / 1000} s, using its playback session")
+            runCatching { mb.disconnect() }
+            browser = null
+            attachToSession(app)
+        }, CONNECT_WAIT_MS)
     }
 
     /**
@@ -273,7 +308,12 @@ class CarMedia(private val context: Context) {
             return
         }
         if (session == null) {
-            val limit = if (launched) SESSION_RETRIES_LAUNCHED else SESSION_RETRIES
+            // A known session-only app that isn't running won't start by waiting: say so at once.
+            val limit = when {
+                launched -> SESSION_RETRIES_LAUNCHED
+                KnownApps.playerWorks(app.component.packageName) -> 0
+                else -> SESSION_RETRIES
+            }
             // The app only publishes its session once its service has started; give it a moment.
             if (attempt < limit) {
                 main.postDelayed({ attachToSession(app, attempt + 1, launched) }, SESSION_RETRY_MS)
@@ -342,14 +382,37 @@ class CarMedia(private val context: Context) {
             speed = state?.playbackSpeed ?: 1f,
             updatedAt = state?.lastPositionUpdateTime ?: 0,
             actions = state?.actions ?: 0,
-            custom = state?.customActions.orEmpty().map { CustomAction(it.action, it.name.toString(), it.extras, it.icon) },
+            custom = state?.customActions.orEmpty().map { CustomAction(it.action, it.name.toString(), it.extras, it.icon, iconName(it.icon)) },
             error = state?.errorMessage?.toString(),
             activeQueueItemId = state?.activeQueueItemId ?: MediaSession.QueueItem.UNKNOWN_ID.toLong(),
             heart = if (controller?.ratingType == Rating.RATING_HEART) {
                 metadata?.getRating(MediaMetadata.METADATA_KEY_USER_RATING)?.takeIf { it.isRated }?.hasHeart() ?: false
             } else null,
         )
+        logButtons()
         checkSearch()
+    }
+
+    private var appResources: Pair<String, android.content.res.Resources?>? = null
+
+    /** The icon's resource name in the app's package, or "" when it can't be read. */
+    private fun iconName(icon: Int): String {
+        val pkg = controller?.packageName ?: return ""
+        if (appResources?.first != pkg) {
+            appResources = pkg to runCatching { context.packageManager.getResourcesForApplication(pkg) }.getOrNull()
+        }
+        val res = appResources?.second ?: return ""
+        return runCatching { res.getResourceEntryName(icon) }.getOrDefault("")
+    }
+
+    private var loggedButtons: String? = null
+
+    /** The app's own buttons, by id, name and icon, each time they change. */
+    private fun logButtons() {
+        val text = _now.value.custom.joinToString { a -> "${a.id} \"${a.name}\" icon=${a.iconName.ifEmpty { a.icon.toString() }}" }
+        if (text == loggedButtons) return
+        loggedButtons = text
+        GearslipLog.i("media: app buttons: ${text.ifEmpty { "none" }}")
     }
 
     // --- browsing ------------------------------------------------------------------------
@@ -419,6 +482,12 @@ class CarMedia(private val context: Context) {
         val controls = controller?.transportControls ?: return
         if (_now.value.playing) controls.pause() else controls.play()
     }
+    /**
+     * Pauses whatever the app thinks it's doing. Voice pauses the music to listen, so by the time
+     * "pause" is heard the app already looks stopped; a toggle did nothing and the song came back
+     * as soon as the microphone let go. A real pause tells the app to stay stopped.
+     */
+    fun pause() = controller?.transportControls?.pause()
     fun next() = controller?.transportControls?.skipToNext()
     fun previous() = controller?.transportControls?.skipToPrevious()
     fun seek(ms: Long) = controller?.transportControls?.seekTo(ms)
@@ -454,7 +523,7 @@ class CarMedia(private val context: Context) {
         }
         val component = searchComponent
         if (component == null) {
-            _results.value = Results(q, emptyList(), supported = false)
+            noLibrarySearch(q)
             return
         }
         resultsQuery = q
@@ -476,13 +545,13 @@ class CarMedia(private val context: Context) {
             override fun onConnectionFailed() {
                 GearslipLog.w("media: no library connection for search")
                 searchBrowser = null
-                resultsQuery?.let { _results.value = Results(it, emptyList(), supported = false) }
+                resultsQuery?.let { noLibrarySearch(it) }
             }
         }, null)
         searchBrowser = created
         runCatching { created.connect() }.onFailure {
             searchBrowser = null
-            _results.value = Results(q, emptyList(), supported = false)
+            noLibrarySearch(q)
         }
     }
 
@@ -492,18 +561,42 @@ class CarMedia(private val context: Context) {
                 override fun onSearchResult(query: String, extras: Bundle?, items: List<MediaBrowserCompat.MediaItem>) {
                     if (query != resultsQuery) return
                     GearslipLog.i("media: library search found ${items.size}")
-                    _results.value = Results(query, items.map(::entryOfCompat))
+                    val entries = items.map(::entryOfCompat)
+                    if (query == playFirstFor) {
+                        playFirstFor = null
+                        val first = entries.firstOrNull { it.playable } ?: entries.firstOrNull()
+                        if (first == null) {
+                            clearResults()
+                            search(query)
+                        } else {
+                            GearslipLog.i("media: playing the library's best match")
+                            clearResults()
+                            searchBefore = _now.value
+                            _search.value = Search(query)
+                            main.removeCallbacks(searchTimeout)
+                            controller?.transportControls?.playFromMediaId(first.id, null)
+                            main.postDelayed(searchTimeout, SEARCH_WAIT_MS)
+                        }
+                        return
+                    }
+                    _results.value = Results(query, entries)
                 }
 
                 override fun onError(query: String, extras: Bundle?) {
                     if (query != resultsQuery) return
+                    if (query == playFirstFor) {
+                        playFirstFor = null
+                        clearResults()
+                        search(query)
+                        return
+                    }
                     GearslipLog.i("media: the app has no library search")
                     _results.value = Results(query, emptyList(), supported = false)
                 }
             })
         }.onFailure {
             GearslipLog.w("media: library search failed: ${it.message}")
-            _results.value = Results(q, emptyList(), supported = false)
+            noLibrarySearch(q)
         }
     }
 
@@ -518,6 +611,36 @@ class CarMedia(private val context: Context) {
             browsable = item.isBrowsable,
             playable = item.isPlayable,
         )
+    }
+
+    /** The library can't search: a voice "play X" falls back to the app's own search; a typed one says so. */
+    private fun noLibrarySearch(q: String) {
+        if (q == playFirstFor) {
+            playFirstFor = null
+            clearResults()
+            search(q)
+        } else {
+            _results.value = Results(q, emptyList(), supported = false)
+        }
+    }
+
+    /** A voice "play X" waiting on the library search, to play its first match instead of listing them. */
+    private var playFirstFor: String? = null
+
+    /**
+     * Plays the best match for [query], for voice. Asks the app's library first and plays its top
+     * result, which apps like ViVi honour where they ignore [search]; without a library search,
+     * falls back to [search].
+     */
+    fun playBestMatch(query: String) {
+        val q = query.trim()
+        if (q.isEmpty()) return
+        if (!canSearchLibrary) {
+            search(q)
+            return
+        }
+        playFirstFor = q
+        searchLibrary(q)
     }
 
     /** The connected app's service, for the search connection; null when nothing is connected. */
@@ -637,6 +760,7 @@ class CarMedia(private val context: Context) {
     }
 
     private companion object {
+        const val CONNECT_WAIT_MS = 8_000L
         const val SESSION_RETRIES = 6
         const val SESSION_RETRY_MS = 500L
         /** After opening a cold app, how long to wait before the first look for its session. */

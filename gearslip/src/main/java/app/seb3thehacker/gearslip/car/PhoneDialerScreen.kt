@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -87,6 +88,31 @@ internal fun placeCall(context: Context, number: String) {
             Intent(Intent.ACTION_CALL, Uri.parse("tel:${Uri.encode(number)}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
     }
+}
+
+/** A call another car screen wants to place - a number on a place page - waiting on the driver. */
+internal object CallPrompt {
+    val pending = kotlinx.coroutines.flow.MutableStateFlow<Contact?>(null)
+
+    fun ask(name: String, number: String) {
+        pending.value = Contact(name, number)
+    }
+}
+
+/** The dialer's own confirmation, drawn over the whole car screen for [CallPrompt]. */
+@Composable
+internal fun CallPromptOverlay() {
+    val context = LocalContext.current
+    val contact by CallPrompt.pending.collectAsState()
+    val c = contact ?: return
+    ConfirmCallOverlay(
+        c,
+        onConfirm = {
+            CallPrompt.pending.value = null
+            placeCall(context, c.number)
+        },
+        onDismiss = { CallPrompt.pending.value = null },
+    )
 }
 
 private const val TAB_CONTACTS = 0

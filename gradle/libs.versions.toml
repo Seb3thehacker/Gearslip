@@ -14,6 +14,7 @@ material = "1.14.0"
 constraintlayout = "2.2.1"
 zxing = "3.5.4"
 okhttp = "5.4.0"
+commonsCompress = "1.28.0"
 kotlinxSerializationJson = "1.11.0"
 ossLicenses = "17.5.1"
 webkit = "1.16.0"
@@ -49,6 +50,7 @@ androidx-constraintlayout = { group = "androidx.constraintlayout", name = "const
 google-material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+commons-compress = { group = "org.apache.commons", name = "commons-compress", version.ref = "commonsCompress" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 google-oss-licenses = { group = "com.google.android.gms", name = "play-services-oss-licenses", version.ref = "ossLicenses" }
 androidx-webkit = { group = "androidx.webkit", name = "webkit", version.ref = "webkit" }

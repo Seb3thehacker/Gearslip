@@ -2,6 +2,7 @@ package app.seb3thehacker.gearslip.car
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -43,6 +44,10 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.hapticfeedback.HapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -120,12 +125,16 @@ fun CarUi() {
             controlsWake.tick()
         }
     }
+    // The knob counts as a touch: the map's buttons can't be found while they're faded out.
+    LaunchedEffect(controlsWake) { CarKeys.focusMoves.collect { controlsWake.touch() } }
     remember(appContext) { Prefetch.warm(appContext, force = true); CarServices.init(appContext) }
     DisposableEffect(Unit) { onDispose { CarServices.shutdown() } }
     // Ask for the phone's sound as soon as the car connects, not only when a media app opens:
     // a video in the web browser or a map's voice needs it too. Asks once, after the car offers
     // somewhere to play it.
     LaunchedEffect(Unit) { if (CarSettings.pipeAudio.value) app.seb3thehacker.gearslip.audio.CarAudio.request() }
+    // A new version gets one card in the top right, a few seconds in and only while parked.
+    LaunchedEffect(Unit) { app.seb3thehacker.gearslip.update.UpdateChecker.onCarConnected(appContext) }
     // The map follows the light outside, whatever the app's own theme is set to.
     LaunchedEffect(darkOutside) { CarServices.nav.pushConfiguration() }
 
@@ -150,14 +159,27 @@ fun CarUi() {
                     VoiceReply.state.value.phase != VoiceReply.Phase.IDLE -> VoiceReply.cancel()
                     else -> navigator.back()
                 }
-                CarKeys.ScreenKey.HOME, CarKeys.ScreenKey.MAP -> navigator.home()
-                CarKeys.ScreenKey.MEDIA -> if (CarServices.mediaApp.value != null) navigator.media() else navigator.apps()
+                // Home is the dashboard, over the map, so Back from it lands on the map.
+                CarKeys.ScreenKey.HOME -> { navigator.home(); navigator.dashboard() }
+                CarKeys.ScreenKey.MAP -> navigator.home()
+                CarKeys.ScreenKey.MEDIA ->
+                    if (CarServices.mediaApp.value != null || CarServices.reopenLastMedia()) navigator.media()
+                    else navigator.apps()
                 CarKeys.ScreenKey.PHONE -> BuiltInApps.Phone.open(navigator)
             }
         }
     }
 
+    // The car screen is drawn on the phone, so every long press or text-handle drag would buzz
+    // the phone in its mount. Nobody feels that while driving; it's only noise.
+    val view = LocalView.current
+    DisposableEffect(view) {
+        view.isHapticFeedbackEnabled = false
+        onDispose { }
+    }
+
     CompositionLocalProvider(
+        LocalHapticFeedback provides NoHaptics,
         LocalDensity provides Density(base.density * scale, base.fontScale),
         LocalCarNavigator provides navigator,
         LocalDarkOutside provides darkOutside,
@@ -165,6 +187,7 @@ fun CarUi() {
         LocalGsTheme provides GsThemes.byId(uiThemeId),
     ) {
         MaterialTheme(colorScheme = colors) {
+          CompositionLocalProvider(LocalIndication provides FocusRingIndication(MaterialTheme.colorScheme.primary)) {
             Surface(
                 Modifier
                     .fillMaxSize()
@@ -224,6 +247,9 @@ fun CarUi() {
                                 }
                             }
                         }
+                        CarToastOverlay(Modifier.align(Alignment.BottomCenter))
+                        CallPromptOverlay()
+                        BluetoothPairOverlay()
                         PopupTimer()
                         // The dashboard is already listing them, so it needs no popup.
                         NotificationPopup(
@@ -231,14 +257,15 @@ fun CarUi() {
                             modifier = Modifier.align(Alignment.TopEnd),
                         )
                         // Above the popup: a call is more urgent than any notification.
+                        VoiceHelpOverlay(Modifier.align(Alignment.Center))
                         CallOverlay(Modifier.align(Alignment.TopCenter))
-                        AssistantOverlay(Modifier.align(Alignment.TopCenter))
+                        AssistantOverlay(Modifier.align(Alignment.BottomCenter))
                         if (app.seb3thehacker.gearslip.BuildConfig.DEBUG) {
                             // Bottom corner, not top: a screen's own header almost always puts
                             // something in the top-right (settings, search, a Liked Songs
                             // shortcut) and this badge used to sit right on top of it, hiding
                             // whatever the screen drew there.
-                            DevBuildBadge(Modifier.align(Alignment.BottomEnd))
+                            DebugBuildBadge(Modifier.align(Alignment.BottomEnd))
                         }
                     }
                     // The keyboard takes the nav bar's row instead of squeezing in above it -
@@ -252,6 +279,7 @@ fun CarUi() {
                 if (safetyWarningSeen) CarWhatsNew()
                 }
             }
+          }
         }
     }
 }
@@ -354,7 +382,7 @@ private fun AppWontStart(app: String, onBack: () -> Unit) {
  * that matters while driving, since a debug build is slower and less tested than what ships.
  */
 @Composable
-private fun DevBuildBadge(modifier: Modifier = Modifier) {
+private fun DebugBuildBadge(modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier.padding(6.dp),
         color = MaterialTheme.colorScheme.error,
@@ -362,7 +390,7 @@ private fun DevBuildBadge(modifier: Modifier = Modifier) {
         shape = MaterialTheme.shapes.small,
     ) {
         Text(
-            "DEV BUILD",
+            "DEBUG BUILD",
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -443,12 +471,8 @@ private fun CarNavBar(navigator: CarNavigator) {
                 NavHomeButton(navigator, entries, running)
                 Spacer(Modifier.width(6.dp))
                 NavItem(MediaIcons.Apps, navigator.current == CarScreen.Apps) { navigator.apps() }
-                val experimentalFeatures by CarSettings.experimentalFeaturesEnabled.collectAsState()
-                val voiceEnabled by CarSettings.voiceAssistantEnabled.collectAsState()
-                if (experimentalFeatures && voiceEnabled) {
-                    Spacer(Modifier.width(6.dp))
-                    NavAssistantIcon()
-                }
+                Spacer(Modifier.width(6.dp))
+                NavAssistantIcon()
 
                 // Pinned shortcuts, then whatever else is open right now. A pinned app that's also
                 // open stays in its pinned spot, marked with a dot, instead of showing up twice.
@@ -878,4 +902,9 @@ private fun ChargingGlyph(modifier: Modifier = Modifier, tint: Color = MaterialT
         }
         drawPath(bolt, tint)
     }
+}
+
+/** Stands in for the phone's vibration motor on the car screen: does nothing. */
+private object NoHaptics : HapticFeedback {
+    override fun performHapticFeedback(hapticFeedbackType: HapticFeedbackType) {}
 }

@@ -24,6 +24,12 @@ val keystoreProperties = Properties().apply {
     ).firstOrNull { it.exists() }?.inputStream()?.use { load(it) }
 }
 
+// Keeps build output out of the module folder: <root>/build/gearslip/... instead of
+// <root>/gearslip/build/..., so everything this project produces lands under one
+// root-level build/ directory. Set before android {}, which works out the path to R8's default
+// rules from it.
+layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("gearslip"))
+
 android {
     namespace = "app.seb3thehacker.gearslip"
     compileSdk = 37
@@ -32,8 +38,9 @@ android {
         applicationId = "app.seb3thehacker.gearslip"
         minSdk = 31
         targetSdk = 37
-        versionCode = 8
-        versionName = "0.2.00-alpha"
+        versionCode = 9
+        // -PgearslipVersionName=0.1.99-test makes a build that thinks it's older, to try the updater.
+        versionName = project.findProperty("gearslipVersionName")?.toString() ?: "0.3.00-alpha"
         manifestPlaceholders["appLabel"] = "Gearslip"
         // Where opted-in phones send their daily usage note: the stats-worker/ Worker's address,
         // set as gearslipStatsUrl in gradle.properties. Left empty, nothing is ever sent.
@@ -56,14 +63,23 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.findByName("release")
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
-        // Its own package, so a dev build installs beside the release one instead of over it.
+        // Its own package, so a debug build installs beside the release one instead of over it.
         // Signed with the release key when it's here: both builds declare the car template
         // permission, and Android refuses a second app declaring it under a different key.
         debug {
             applicationIdSuffix = ".dev"
             signingConfigs.findByName("release")?.let { signingConfig = it }
-            manifestPlaceholders["appLabel"] = "Gearslip Dev"
+            manifestPlaceholders["appLabel"] = "Gearslip Debug"
+            // -Pr8 shrinks a debug build like a release one, to test R8 in the debug install.
+            if (project.hasProperty("r8")) {
+                isMinifyEnabled = true
+                isShrinkResources = true
+                proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            }
         }
     }
 
@@ -71,31 +87,15 @@ android {
         buildConfig = true
     }
 
-    // Keeps build output out of the module folder: <root>/build/gearslip/... instead of
-    // <root>/gearslip/build/..., so everything this project produces lands under one
-    // root-level build/ directory.
-    layout.buildDirectory.set(rootProject.layout.buildDirectory.dir("gearslip"))
-
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
 
     defaultConfig {
-        // Speech-to-text ships for 64-bit ARM only: every phone Gearslip runs on, and one copy
-        // of the native library instead of four.
+        // Speech-to-text (sherpa-onnx, in jniLibs) ships for 64-bit ARM only: every phone
+        // Gearslip runs on, and one copy of the native library instead of four.
         ndk { abiFilters += "arm64-v8a" }
-    }
-    ndkVersion = "27.1.12297006"
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-    androidResources {
-        // Model weights barely compress, and stored plainly they stream straight out of the APK.
-        noCompress += "bin"
     }
 
     testOptions {
@@ -129,6 +129,7 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.commons.compress)
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)

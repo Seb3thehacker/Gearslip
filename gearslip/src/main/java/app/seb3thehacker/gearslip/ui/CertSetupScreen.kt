@@ -60,7 +60,6 @@ fun CertSetupScreen(onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     var downloadState by remember { mutableStateOf<DownloadState>(DownloadState.Idle) }
-    var showImport by remember { mutableStateOf(false) }
     var pendingUri by remember { mutableStateOf<Uri?>(null) }
     var manualProgress by remember { mutableStateOf(false) }
 
@@ -91,7 +90,7 @@ fun CertSetupScreen(onDone: () -> Unit) {
                 if (installed) {
                     "Cars accept only Google-issued certificates, and you have one loaded."
                 } else {
-                    "Cars accept only Google-issued certificates. Download one to connect."
+                    "Cars accept only Google-issued certificates. Gearslip doesn't include one, so choose where yours comes from."
                 },
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
@@ -131,10 +130,11 @@ fun CertSetupScreen(onDone: () -> Unit) {
                         },
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                     ) {
-                        Text("Download certificate")
+                        Text("Download from aasdk")
                     }
                     Text(
-                        "Works with most cars built before 2020. Newer cars reject it.",
+                        "The open-source aasdk project publishes this certificate at github.com/opencardev/aasdk. " +
+                            "Most cars accept it; some from around 2020 on don't.",
                         style = MaterialTheme.typography.bodySmall,
                         textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -177,16 +177,18 @@ fun CertSetupScreen(onDone: () -> Unit) {
 
             Spacer(Modifier.height(16.dp))
 
-            if (showImport) {
-                OutlinedButton(
-                    onClick = { importLauncher.launch(arrayOf("*/*")) },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                ) { Text("Import your own .p12 cert") }
-                Spacer(Modifier.height(16.dp))
-            } else {
-                TextButton(onClick = { showImport = true }) { Text("Import your own certificate instead") }
-                Spacer(Modifier.height(8.dp))
-            }
+            OutlinedButton(
+                onClick = { importLauncher.launch(arrayOf("*/*")) },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) { Text("Import my own file") }
+            Text(
+                "A .p12 file with its private key, from wherever you choose.",
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+            Spacer(Modifier.height(16.dp))
 
             OutlinedButton(
                 onClick = {

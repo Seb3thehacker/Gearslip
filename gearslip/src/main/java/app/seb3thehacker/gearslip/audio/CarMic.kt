@@ -12,17 +12,21 @@ import java.util.concurrent.TimeUnit
  *
  *   -> CHANNEL_OPEN_REQUEST          <- CHANNEL_OPEN_RESPONSE
  *   -> Setup { config_index }        <- Config
+ *   -> VoiceSessionNotification { START }   (control channel)
  *   -> MicrophoneRequest { open }    <- MicrophoneResponse { status, session_id }
  *   <- Data { 8-byte timestamp, PCM }...   -> Ack { session_id, ack }
  *   -> MicrophoneRequest { open = false }
+ *   -> VoiceSessionNotification { END }
  *
- * The channel opens with the session, but the car only records between [start] and [stop].
+ * The channel opens with the session, but the car only records between [start] and [stop], and
+ * only inside a voice session: the 2024 VW answered a bare MicrophoneRequest with status -7.
  * Speech wants 16 kHz mono; a car that records at a multiple of that is averaged down to it, and
  * one that doesn't isn't used, so voice falls back to the phone's microphone.
  */
 class CarMic(
     private val service: ServiceDiscovery.AudioService,
     private val sendOnChannel: (messageId: Int, body: ByteArray) -> Unit,
+    private val voiceSession: (start: Boolean) -> Unit,
 ) {
     val channelId get() = service.serviceId
 
@@ -43,7 +47,8 @@ class CarMic(
                 val status = Protobuf.readInt32Field(body, 1) ?: 0
                 GearslipLog.i("mic: <- ChannelOpenResponse: status=$status")
                 if (status != 0) return
-                sendOnChannel(MSG_SETUP, Protobuf.varintField(1, 0L))
+                // Setup { type = the codec }, as for audio: 0 got UNEXPECTED_MESSAGE from the VW.
+                sendOnChannel(MSG_SETUP, Protobuf.varintField(1, service.codecType.toLong()))
                 ready = usable
                 if (!usable) {
                     GearslipLog.w(
@@ -97,6 +102,7 @@ class CarMic(
         chunks.clear()
         packets = 0
         listening = true
+        voiceSession(true)
         sendOnChannel(MSG_MIC_REQUEST, Protobuf.varintField(1, 1L) + Protobuf.varintField(4, 1L))
         GearslipLog.i("mic: -> MicrophoneRequest(open)")
         return true
@@ -109,7 +115,8 @@ class CarMic(
         if (!listening) return
         listening = false
         sendOnChannel(MSG_MIC_REQUEST, Protobuf.varintField(1, 0L))
-        GearslipLog.i("mic: -> MicrophoneRequest(close) after $packets packets")
+        voiceSession(false)
+        GearslipLog.i("mic: -> MicrophoneRequest(close) after $packets packets, voice session ended")
     }
 
     companion object {

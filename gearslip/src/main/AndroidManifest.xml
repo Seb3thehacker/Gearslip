@@ -4,6 +4,7 @@
 
     <!-- The projected WebView loads real pages; without this every load fails silently. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!--
       Phone mirroring. Android refuses to hand over a MediaProjection unless a foreground
@@ -18,6 +19,22 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+
+    <!--
+        Wireless Android Auto: Bluetooth reaches the paired car's Android Auto service, which
+        hands over its Wi-Fi details; Gearslip then joins that network to reach the car.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation" />
+    <!-- Android 17 drops an app's traffic to the car's Wi-Fi without this. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
 
     <!-- The dashboard opened from the car clock: today's agenda and current weather. -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
@@ -74,8 +91,10 @@
          LAUNCHER query below to find, so the setup guide's Android Auto check needs this to see
          whether the package is installed at all. -->
     <package android:name="com.google.android.projection.gearhead" />
-    <!-- Every GrapheneOS install has this; the opt-in usage note uses it to say "GrapheneOS". -->
+    <!-- The opt-in usage note names the OS: GrapheneOS's setup app and /e/OS's app store give
+         them away (UsageStats.osName). -->
     <package android:name="app.grapheneos.setupwizard" />
+    <package android:name="foundation.e.apps" />
     <intent>
         <action android:name="android.intent.action.MAIN" />
         <category android:name="android.intent.category.LAUNCHER" />

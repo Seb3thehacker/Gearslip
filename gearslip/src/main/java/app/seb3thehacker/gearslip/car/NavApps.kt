@@ -72,7 +72,7 @@ internal class BuiltInApp(
 )
 
 internal object BuiltInApps {
-    val Web = BuiltInApp("web", "Web", Icons.Filled.Search, CarScreen.App("web")) { it.open("web") }
+    val Web = BuiltInApp("web", "Browser", Icons.Filled.Search, CarScreen.App("web")) { it.open("web") }
     val ScreenSharing = BuiltInApp("phone", "Screen sharing", Icons.Filled.Share, CarScreen.App("phone")) { it.open("phone") }
     val Phone = BuiltInApp("dialer", "Phone", Icons.Filled.Call, CarScreen.App("dialer")) { it.open("dialer") }
     val VehicleData = BuiltInApp("vehicle", "Vehicle data", Icons.Filled.Info, CarScreen.VehicleData) { it.vehicleData() }

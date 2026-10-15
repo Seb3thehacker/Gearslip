@@ -47,12 +47,15 @@ private class RecommendedApp(val name: String, val packageName: String, val url:
 
 private val recommended = listOf(
     "Maps" to listOf(
-        RecommendedApp("Vela Maps", "app.vela", "https://github.com/PimpinPumpkin/Vela", "Turn-by-turn navigation without Google."),
         RecommendedApp("Organic Maps", "app.organicmaps", "https://github.com/organicmaps/organicmaps", "Offline maps and routing."),
+        RecommendedApp("Vela Maps", "app.vela", "https://github.com/PimpinPumpkin/Vela", "Turn-by-turn navigation without Google."),
     ),
     "Music" to listOf(
         RecommendedApp("ViVi Music", "com.vivi.vivimusic", "https://github.com/vivizzz007/vivi-music", "A YouTube Music player."),
         RecommendedApp("Metrolist", "com.metrolist.music", "https://github.com/MetrolistGroup/Metrolist", "A YouTube Music player."),
+    ),
+    "Podcasts" to listOf(
+        RecommendedApp("AntennaPod", "de.danoeh.antennapod", "https://github.com/AntennaPod/AntennaPod", "Podcasts, chapters and all."),
     ),
 )
 

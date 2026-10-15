@@ -2,6 +2,7 @@ package app.seb3thehacker.gearslip.car
 
 import android.content.Context
 import app.seb3thehacker.gearslip.AppSettings
+import app.seb3thehacker.gearslip.audio.CarAudio
 import app.seb3thehacker.gearslip.car.theme.GsTheme
 import app.seb3thehacker.gearslip.car.theme.GsThemes
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +28,10 @@ object CarSettings {
     private const val KEY_OPEN = "car_open_on_connect"
     private const val KEY_NIGHT = "car_night_mode"
     private const val KEY_PIPE_AUDIO = "car_pipe_audio"
+private const val KEY_SPEAK_DIRECTIONS = "car_speak_directions"
+private const val KEY_BLUETOOTH_WARNING = "car_bluetooth_warning"
+private const val KEY_LOCATION_WARNING = "car_location_warning"
+    private const val KEY_AUDIO_CHOICE_ASKED = "car_audio_choice_asked"
     private const val KEY_LAST_NAV = "car_last_nav"
     private const val KEY_LAST_MEDIA = "car_last_media"
     private const val KEY_AUTOPLAY = "car_autoplay"
@@ -36,9 +41,8 @@ object CarSettings {
     private const val KEY_PINNED = "car_pinned_apps"
     private const val KEY_APP_ORDER = "car_app_order"
     private const val KEY_EXPERIMENTAL_FEATURES = "car_experimental_features"
-    private const val KEY_VOICE_ASSISTANT = "car_voice_assistant"
+    private const val KEY_SYSTEM_SPEECH = "car_system_speech"
     private const val KEY_CAR_SENSORS = "car_sensors_enabled"
-    private const val KEY_MEDIA_SEARCH = "car_media_search_enabled"
     private const val KEY_SEEN_SAFETY_WARNING = "car_seen_safety_warning"
     private const val KEY_UNITS = "car_units"
     private const val KEY_WHATS_NEW = "car_whats_new_after_updates"
@@ -57,6 +61,9 @@ object CarSettings {
     private val openFlow = MutableStateFlow(HOME)
     private val nightFlow = MutableStateFlow(NightMode.AUTO)
     private val pipeAudioFlow = MutableStateFlow(true)
+    private val speakDirectionsFlow = MutableStateFlow(true)
+    private val bluetoothWarningFlow = MutableStateFlow(true)
+    private val locationWarningFlow = MutableStateFlow(true)
     private val lastNavFlow = MutableStateFlow<String?>(null)
     private val lastMediaFlow = MutableStateFlow<String?>(null)
     private val autoplayFlow = MutableStateFlow(false)
@@ -70,9 +77,8 @@ object CarSettings {
     private val pinnedFlow = MutableStateFlow<Set<String>>(emptySet())
     private val appOrderFlow = MutableStateFlow<List<String>>(emptyList())
     private val experimentalFeaturesFlow = MutableStateFlow(false)
-    private val voiceAssistantFlow = MutableStateFlow(false)
+    private val systemSpeechFlow = MutableStateFlow(false)
     private val carSensorsFlow = MutableStateFlow(false)
-    private val mediaSearchFlow = MutableStateFlow(false)
     private val seenSafetyWarningFlow = MutableStateFlow(false)
     private val unitsFlow = MutableStateFlow(Units.AUTO)
 
@@ -148,9 +154,32 @@ object CarSettings {
      * Whether a media app's sound is captured and sent over the car link. On by default, since
      * sound in the car is the point of the exercise; the platform allows the capture only behind a
      * consent dialog, which [app.seb3thehacker.gearslip.audio.CarAudio] raises once the car has
-     * somewhere to play it. Turned off, the app plays through the phone's normal output instead.
+     * somewhere to play it. Turned off ("Bluetooth" in the settings), the app plays through the
+     * phone's normal output instead, and Android never asks.
      */
     val pipeAudio: StateFlow<Boolean> = pipeAudioFlow
+
+    /** Gearslip reads the map app's turns aloud on the car's directions channel; see DirectionsVoice. */
+    val speakDirections: StateFlow<Boolean> = speakDirectionsFlow
+
+    /** With Bluetooth audio, warn when the phone isn't connected to the car; see BluetoothAudioCheck. */
+    val bluetoothWarning: StateFlow<Boolean> = bluetoothWarningFlow
+
+    /** Warn on the car when the phone's location is off; see LocationCheck. */
+    val locationWarning: StateFlow<Boolean> = locationWarningFlow
+
+    /**
+     * Whether the driver has already been offered Bluetooth after turning down the capture
+     * dialog. Offered once only: someone who chose to keep the USB route shouldn't be nagged.
+     */
+    /** False until the driver picks USB or Bluetooth, in setup or in settings. */
+    val pipeAudioChosen: Boolean
+        get() = AppSettings.getString(app, KEY_PIPE_AUDIO, "") != ""
+
+    val audioChoiceAsked: Boolean
+        get() = AppSettings.getString(app, KEY_AUDIO_CHOICE_ASKED, "false") == "true"
+
+    fun markAudioChoiceAsked() = AppSettings.putString(app, KEY_AUDIO_CHOICE_ASKED, "true")
 
     /**
      * Off by default: a driver has to opt into experimental features as a whole before any of
@@ -158,12 +187,8 @@ object CarSettings {
      */
     val experimentalFeaturesEnabled: StateFlow<Boolean> = experimentalFeaturesFlow
 
-    /**
-     * The voice assistant is experimental and off by default; a driver has to turn it on
-     * knowingly, from the settings screen, after reading the warning shown there. This flag
-     * alone does not run the assistant - [experimentalFeaturesEnabled] must also be on.
-     */
-    val voiceAssistantEnabled: StateFlow<Boolean> = voiceAssistantFlow
+    /** Listen with the phone's own speech service instead of Gearslip's on-device model. */
+    val systemSpeech: StateFlow<Boolean> = systemSpeechFlow
 
     /**
      * Vehicle data is experimental and off by default: the launcher's tile for it, and the
@@ -172,13 +197,6 @@ object CarSettings {
      * for why the raw sensor feed it shows is worth gating - the field labels are unverified.
      */
     val carSensorsEnabled: StateFlow<Boolean> = carSensorsFlow
-
-    /**
-     * Searching inside a media app is experimental and off by default: many apps claim to take
-     * searches and then ignore them or play something else. The media screen's search button
-     * shows only once this and [experimentalFeaturesEnabled] are both on.
-     */
-    val mediaSearchEnabled: StateFlow<Boolean> = mediaSearchFlow
 
     /**
      * Whether the car screen's own "drive safely" warning has already been shown and dismissed
@@ -206,6 +224,11 @@ object CarSettings {
         autoplayFlow.value = AppSettings.getString(app, KEY_AUTOPLAY, "false") == "true"
         playerTitleFlow.value = AppSettings.getString(app, KEY_PLAYER_TITLE, "false") == "true"
         pipeAudioFlow.value = AppSettings.getString(app, KEY_PIPE_AUDIO, "true") == "true"
+        // Until the driver sets it, on for USB audio and off for Bluetooth, where the map app's
+        // own voice already reaches the car.
+        speakDirectionsFlow.value = AppSettings.getString(app, KEY_SPEAK_DIRECTIONS, pipeAudioFlow.value.toString()) == "true"
+        bluetoothWarningFlow.value = AppSettings.getString(app, KEY_BLUETOOTH_WARNING, "true") == "true"
+        locationWarningFlow.value = AppSettings.getString(app, KEY_LOCATION_WARNING, "true") == "true"
         nightFlow.value = runCatching {
             NightMode.valueOf(AppSettings.getString(app, KEY_NIGHT, NightMode.AUTO.name))
         }.getOrDefault(NightMode.AUTO)
@@ -214,9 +237,8 @@ object CarSettings {
         appOrderFlow.value = AppSettings.getString(app, KEY_APP_ORDER, "")
             .split(",").filter { it.isNotEmpty() }
         experimentalFeaturesFlow.value = AppSettings.getString(app, KEY_EXPERIMENTAL_FEATURES, "false") == "true"
-        voiceAssistantFlow.value = AppSettings.getString(app, KEY_VOICE_ASSISTANT, "false") == "true"
+        systemSpeechFlow.value = AppSettings.getString(app, KEY_SYSTEM_SPEECH, "false") == "true"
         carSensorsFlow.value = AppSettings.getString(app, KEY_CAR_SENSORS, "false") == "true"
-        mediaSearchFlow.value = AppSettings.getString(app, KEY_MEDIA_SEARCH, "false") == "true"
         seenSafetyWarningFlow.value = AppSettings.getString(app, KEY_SEEN_SAFETY_WARNING, "false") == "true"
         unitsFlow.value = runCatching {
             Units.valueOf(AppSettings.getString(app, KEY_UNITS, Units.AUTO.name))
@@ -265,9 +287,32 @@ object CarSettings {
         AppSettings.putString(app, KEY_AUTOPLAY, on.toString())
     }
 
+    /**
+     * Takes effect at once: switching to Bluetooth mid-drive stops the capture, and switching
+     * back asks for it again (or waits for the car, if none is connected).
+     */
     fun setPipeAudio(on: Boolean) {
-        pipeAudioFlow.value = on
+        // Saved even when unchanged, so picking the default still counts as a choice.
         AppSettings.putString(app, KEY_PIPE_AUDIO, on.toString())
+        if (pipeAudioFlow.value == on) return
+        pipeAudioFlow.value = on
+        if (AppSettings.getString(app, KEY_SPEAK_DIRECTIONS, "") == "") speakDirectionsFlow.value = on
+        if (on) CarAudio.request() else CarAudio.release()
+    }
+
+    fun setSpeakDirections(on: Boolean) {
+        speakDirectionsFlow.value = on
+        AppSettings.putString(app, KEY_SPEAK_DIRECTIONS, on.toString())
+    }
+
+    fun setBluetoothWarning(on: Boolean) {
+        bluetoothWarningFlow.value = on
+        AppSettings.putString(app, KEY_BLUETOOTH_WARNING, on.toString())
+    }
+
+    fun setLocationWarning(on: Boolean) {
+        locationWarningFlow.value = on
+        AppSettings.putString(app, KEY_LOCATION_WARNING, on.toString())
     }
 
     fun setExperimentalFeaturesEnabled(on: Boolean) {
@@ -275,19 +320,14 @@ object CarSettings {
         AppSettings.putString(app, KEY_EXPERIMENTAL_FEATURES, on.toString())
     }
 
-    fun setVoiceAssistantEnabled(on: Boolean) {
-        voiceAssistantFlow.value = on
-        AppSettings.putString(app, KEY_VOICE_ASSISTANT, on.toString())
+    fun setSystemSpeech(on: Boolean) {
+        systemSpeechFlow.value = on
+        AppSettings.putString(app, KEY_SYSTEM_SPEECH, on.toString())
     }
 
     fun setCarSensorsEnabled(on: Boolean) {
         carSensorsFlow.value = on
         AppSettings.putString(app, KEY_CAR_SENSORS, on.toString())
-    }
-
-    fun setMediaSearchEnabled(on: Boolean) {
-        mediaSearchFlow.value = on
-        AppSettings.putString(app, KEY_MEDIA_SEARCH, on.toString())
     }
 
     fun setNightMode(mode: NightMode) {

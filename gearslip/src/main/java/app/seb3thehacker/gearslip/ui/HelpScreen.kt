@@ -1,6 +1,7 @@
 package app.seb3thehacker.gearslip.ui
 
 import app.seb3thehacker.gearslip.BuildConfig
+import app.seb3thehacker.gearslip.car.CarSettings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,13 +24,16 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 /**
- * One step of the setup list: a sentence that says what to do, and optionally how.
+ * One step: a sentence that says what to do, and optionally how.
  *
  * [command] is for a step that cannot be done on the phone; it is shown as something to copy
  * rather than to read, because a mistyped package name fails silently. [onClick] is for a step
@@ -43,51 +47,58 @@ private class Step(
     val onClick: (() -> Unit)? = null,
 )
 
-private fun setupSteps(onRequestCallScreening: () -> Unit) = listOf(
-    Step("Use a car from 2020 or earlier.", "Newer head units reject the certificate."),
+private val FIRST_DRIVE = listOf(
+    Step("Turn off Android Auto.", "Disable or uninstall the Android Auto app, so the car talks to Gearslip instead."),
+    Step("Load a certificate.", "In Settings, download one or import your own."),
     Step(
-        "On GrapheneOS, exempt Gearslip from exploit protections.",
-        "Open Settings, then Apps, then Gearslip, and turn on Exploit protection compatibility mode.",
+        "Allow the microphone.",
+        "Android won't let an app pass music to the car without it. Gearslip listens only when " +
+            "you tap the mic or press the talk button on your wheel.",
     ),
-    Step("Disable or uninstall the Android Auto app."),
-    Step("Load a certificate.", "Open Settings, then download or import a certificate."),
+)
+
+private fun inTheCar(onRequestCallScreening: () -> Unit) = listOf(
     Step(
-        "Allow the microphone, so music can reach the car.",
-        "Android asks for the microphone before it will let any app pass music along. " +
-            "Gearslip listens only when you tap Reply or press the voice button. The rest of the " +
-            "time it copies what a music app is playing, and nothing else.",
-    ),
-    Step(
-        "Optional: stop Android asking about audio every drive.",
-        "Connect the phone to a computer with USB debugging turned on, and run this command. " +
-            "It tells Android to trust Gearslip with audio from now on. Skip it and everything " +
-            "still works, but you have to tap Start once each time you set off.",
-        command = "adb shell appops set ${BuildConfig.APPLICATION_ID} PROJECT_MEDIA allow",
+        "Plug in, or connect wirelessly.",
+        "Gearslip opens by itself when the car connects. For wireless, pair the phone with the " +
+            "car first, then tap Connect wirelessly on Home.",
     ),
     Step(
-        "Optional: keep notifications readable while music plays.",
-        "Android treats sending audio to the car like sharing your screen, and hides what your " +
-            "notifications say. Run this command too, and Gearslip switches that off only while " +
-            "music is going to the car, then puts it back.",
-        command = "adb shell pm grant ${BuildConfig.APPLICATION_ID} android.permission.WRITE_SECURE_SETTINGS",
+        "Pair over Bluetooth for calls.",
+        "Calls play through the car once your phone and the car are paired. Gearslip offers to " +
+            "pair the first time you plug in.",
     ),
     Step(
-        "Optional: let the car screen answer and decline calls.",
-        "This sets Gearslip as your phone's caller ID and spam-blocking app, the same kind of " +
-            "consent a call-blocking app asks for. Without it, calls still ring, but only the " +
-            "phone itself can answer or decline them.",
+        "Answer calls from the car screen.",
+        "Set Gearslip as your caller ID and spam app. Without it, calls still ring, but only " +
+            "the phone can answer them.",
         buttonLabel = "Set up",
         onClick = onRequestCallScreening,
     ),
-    Step("Plug the phone into the car.", "Gearslip opens by itself when the head unit connects."),
 )
 
-/** The full setup reference, behind the help button: what the one-time guide walks through, kept
- * here too so it can be reread without repeating the guide itself. */
+private val USB_AUDIO = listOf(
+    Step(
+        "Stop the audio prompt each drive.",
+        "Connect the phone to a computer with USB debugging on, and run this once. Skip it and " +
+            "you tap Start each time you set off.",
+        command = "adb shell appops set ${BuildConfig.APPLICATION_ID} PROJECT_MEDIA allow",
+    ),
+    Step(
+        "Keep notifications readable.",
+        "Android hides what notifications say while it shares audio. Run this too, and Gearslip " +
+            "lifts that only while music goes to the car.",
+        command = "adb shell pm grant ${BuildConfig.APPLICATION_ID} android.permission.WRITE_SECURE_SETTINGS",
+    ),
+)
+
+/** Which cars work, and the setup the one-time guide walks through, to reread at any time. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HelpScreen(onBack: () -> Unit, onRequestCallScreening: () -> Unit) {
-    val steps = remember(onRequestCallScreening) { setupSteps(onRequestCallScreening) }
+    val car = remember(onRequestCallScreening) { inTheCar(onRequestCallScreening) }
+    val usb by CarSettings.pipeAudio.collectAsState()
+    val context = LocalContext.current
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -108,39 +119,59 @@ fun HelpScreen(onBack: () -> Unit, onRequestCallScreening: () -> Unit) {
                 .padding(padding)
                 .padding(horizontal = 24.dp)
                 .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(0.dp))
+            SettingsSection("Which cars work") {
+                Text(
+                    "Most cars work. Starting around 2020, some cars added newer security " +
+                        "standards that reject Gearslip's certificate, and Gearslip can't run in those cars.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                )
+                FilledTonalButton(
+                    onClick = { GearslipLinks.open(context, GearslipLinks.CARS) },
+                    modifier = Modifier.padding(16.dp),
+                ) { Text("See the full list") }
+            }
+            Steps("Before your first drive", FIRST_DRIVE)
+            Steps("In the car", car)
+            if (usb) Steps("USB audio", USB_AUDIO)
             Spacer(Modifier.height(16.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
-                steps.forEachIndexed { index, step ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text(
-                            "${index + 1}",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.width(16.dp),
-                        )
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(step.action, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
-                            step.detail?.let {
-                                Text(
-                                    it,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            step.command?.let { CopyableCommand(it) }
-                            if (step.onClick != null) {
-                                FilledTonalButton(onClick = step.onClick, modifier = Modifier.padding(top = 4.dp)) {
-                                    Text(step.buttonLabel ?: "Open")
-                                }
-                            }
+        }
+    }
+}
+
+/** A titled card of numbered steps. */
+@Composable
+private fun Steps(title: String, steps: List<Step>) {
+    SettingsSection(title) {
+        steps.forEachIndexed { index, step ->
+            if (index > 0) SettingsDivider()
+            Row(
+                Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    "${index + 1}",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.width(16.dp),
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(step.action, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold)
+                    step.detail?.let {
+                        Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    step.command?.let { CopyableCommand(it) }
+                    if (step.onClick != null) {
+                        FilledTonalButton(onClick = step.onClick, modifier = Modifier.padding(top = 4.dp)) {
+                            Text(step.buttonLabel ?: "Open")
                         }
                     }
                 }
             }
-            Spacer(Modifier.height(32.dp))
         }
     }
 }

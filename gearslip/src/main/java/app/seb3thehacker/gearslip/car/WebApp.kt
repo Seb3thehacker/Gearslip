@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -19,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.viewinterop.AndroidView
 import app.seb3thehacker.gearslip.GearslipLog
 import org.json.JSONObject
@@ -38,6 +40,7 @@ import org.json.JSONObject
 fun WebApp(content: String) {
     val navigator = LocalCarNavigator.current
     val darkOutside = LocalDarkOutside.current
+    val ring = String.format("#%06X", MaterialTheme.colorScheme.primary.toArgb() and 0xFFFFFF)
     var web by remember { mutableStateOf<WebView?>(null) }
     var fieldText by remember { mutableStateOf<String?>(null) }
 
@@ -56,7 +59,7 @@ fun WebApp(content: String) {
 
     Column(Modifier.fillMaxSize()) {
         // Back steps through the page's history first (the interceptor above), then leaves.
-        ScreenHeader("Web", Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+        ScreenHeader("Browser", Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         AndroidView(
             modifier = Modifier.weight(1f).fillMaxSize(),
             factory = { context ->
@@ -65,7 +68,7 @@ fun WebApp(content: String) {
                     settings.domStorageEnabled = true
                     settings.loadWithOverviewMode = true
                     settings.useWideViewPort = true
-                    webViewClient = LoggingClient()
+                    webViewClient = LoggingClient(ring)
                     addJavascriptInterface(
                         FieldFocusBridge(onFocus = { fieldText = it }, onBlur = { fieldText = null }),
                         "GearslipField",
@@ -99,10 +102,11 @@ fun WebApp(content: String) {
     }
 }
 
-private class LoggingClient : WebViewClient() {
+private class LoggingClient(private val ring: String) : WebViewClient() {
     override fun onPageFinished(view: WebView?, url: String?) {
         GearslipLog.i("car web page loaded: $url")
         view?.evaluateJavascript(FOCUS_TRACKING_JS, null)
+        view?.evaluateJavascript(focusRingJs(ring), null)
     }
 
     // onPageFinished fires for error pages too, so without this a blocked load (missing
@@ -167,6 +171,20 @@ private const val SUBMIT_FIELD_JS = """
         if (notHandled && el.form) {
             if (el.form.requestSubmit) el.form.requestSubmit(); else el.form.submit();
         }
+    })();
+"""
+
+/**
+ * The same ring the rest of the car UI shows, on whatever link or field the knob is on. Many
+ * sites hide the browser's own focus outline, which leaves a knob driver with no idea where they are.
+ */
+private fun focusRingJs(color: String) = """
+    (function() {
+        if (document.getElementById('gearslip-focus-ring')) return;
+        var style = document.createElement('style');
+        style.id = 'gearslip-focus-ring';
+        style.textContent = ':focus-visible { outline: 3px solid $color !important; outline-offset: 2px !important; }';
+        (document.head || document.documentElement).appendChild(style);
     })();
 """
 

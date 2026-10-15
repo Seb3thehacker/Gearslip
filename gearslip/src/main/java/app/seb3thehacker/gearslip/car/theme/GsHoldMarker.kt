@@ -50,6 +50,8 @@ enum class HoldMarkerStyle {
  * colour, so the peel's flap matches whatever it sits on. Round and pill-shaped controls get the
  * dot whatever the theme says: a circle has no corner to peel.
  */
+private const val SHOW_HOLD_DOT = false
+
 @Composable
 internal fun BoxScope.GsHoldMarker(style: HoldMarkerStyle, container: Color, shape: Shape, press: InteractionSource) {
     if (style == HoldMarkerStyle.NONE) return
@@ -68,8 +70,9 @@ internal fun BoxScope.GsHoldMarker(style: HoldMarkerStyle, container: Color, sha
         val side = min(size.width, size.height)
         val r = (shape as? CornerBasedShape)?.topEnd?.toPx(size, this) ?: 0f
         val round = r >= side * 0.4f
+        // The dot is off until it's redesigned: flat themes and round controls show nothing.
         if (style == HoldMarkerStyle.DOT || round) {
-            drawHoldDot(r, side, ink)
+            if (SHOW_HOLD_DOT) drawHoldDot(r, side, ink)
         } else {
             // Drawn for the bottom-right corner, then flipped up to the top-right.
             scale(1f, -1f, pivot = center) {

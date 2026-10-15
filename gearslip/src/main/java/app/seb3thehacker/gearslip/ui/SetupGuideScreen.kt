@@ -1,6 +1,44 @@
 package app.seb3thehacker.gearslip.ui
 
+import app.seb3thehacker.gearslip.speech.SpeechModels
+
+import androidx.compose.material3.MaterialTheme
+
+import androidx.compose.material3.LinearProgressIndicator
+
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Phone
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Icon
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -27,15 +65,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -49,6 +79,14 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.seb3thehacker.gearslip.AppSettings
+import app.seb3thehacker.gearslip.car.CarSettings
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.RadioButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.sp
 import app.seb3thehacker.gearslip.call.CarCalls
 import app.seb3thehacker.gearslip.car.Prefetch
 import app.seb3thehacker.gearslip.host.AndroidAuto
@@ -66,13 +104,24 @@ private class GuidePage(
     val title: String,
     /** Plain text, or an [AnnotatedString] when part of it needs to stand out. */
     val explanation: CharSequence,
+    /** Drawn inside the page's badge, in the badge's content colour. */
+    val icon: @Composable (Color) -> Unit,
+    /** Marked "Optional" above the title: everything works without it. */
+    val optional: Boolean = false,
     val permissions: Array<String>? = null,
     val command: String? = null,
     val actionLabel: String? = null,
     val onAction: (() -> Unit)? = null,
-    /** Drawn under [explanation], inside the card. */
+    /** Drawn under [explanation]. */
     val content: (@Composable () -> Unit)? = null,
+    /** Only shown when the driver picked USB audio on the car audio page. */
+    val usbOnly: Boolean = false,
 )
+
+/** A plain Material icon, sized to fill the badge's icon box. */
+private fun glyph(icon: ImageVector): @Composable (Color) -> Unit = { tint ->
+    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.fillMaxSize())
+}
 
 /** True once every permission in [permissions] is already granted - nothing left for this page to do. */
 private fun granted(context: Context, permissions: Array<String>): Boolean =
@@ -105,8 +154,9 @@ private fun hasNotificationAccess(context: Context): Boolean {
  * who set up before the notes existed see once. Leaving it without turning them on is a no.
  */
 private fun usageNotesPage(context: Context) = GuidePage(
-    title = USAGE_STATS_TITLE,
+    title = "Help other drivers.",
     explanation = USAGE_STATS_INTRO,
+    icon = { HeartIcon(it) },
     content = {
         UsageStatsChoices()
         DisposableEffect(Unit) {
@@ -119,11 +169,10 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     // --- Safety: always first, and never skipped by an already-granted check ---------
     add(
         GuidePage(
-            title = "Drive safely",
-            explanation = "This guide sets up the screen you will see mounted in your car. " +
-                "Gearslip is unofficial software: it is not made or reviewed by any carmaker, " +
-                "and it can fail without warning. Never interact with it while driving - set it " +
-                "up, mount the phone, then keep your attention on the road.",
+            title = "Drive safely.",
+            explanation = "Gearslip is unofficial. No carmaker made or checked it, and it can fail " +
+                "without warning. Set it up before you go, then keep your eyes on the road.",
+            icon = glyph(Icons.Filled.Warning),
         ),
     )
 
@@ -132,10 +181,10 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     if (!granted(context, arrayOf(Manifest.permission.RECORD_AUDIO))) {
         add(
             GuidePage(
-                title = "Microphone",
-                explanation = "Gearslip needs the microphone for two jobs: passing your music " +
-                    "app's sound to the car, and hearing you when you reply to a message or ask " +
-                    "the assistant. It listens only then, and your speech stays on the phone.",
+                title = "Microphone.",
+                explanation = "Gearslip uses it to send your music to the car and to hear you when you " +
+                    "ask for something or reply to a message. What you say stays on the phone.",
+                icon = { MicIcon(it) },
                 permissions = arrayOf(Manifest.permission.RECORD_AUDIO),
             ),
         )
@@ -143,9 +192,10 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     if (!granted(context, arrayOf(Manifest.permission.ACCESS_FINE_LOCATION))) {
         add(
             GuidePage(
-                title = "Location",
-                explanation = "The car's map and nearby places need to know where you are. " +
-                    "Without it, the dashboard has no map card.",
+                title = "Location.",
+                explanation = "The car's map and nearby searches need it. Without it, the dashboard " +
+                    "shows no map.",
+                icon = glyph(Icons.Filled.LocationOn),
                 permissions = arrayOf(Manifest.permission.ACCESS_FINE_LOCATION),
             ),
         )
@@ -153,9 +203,9 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     if (!granted(context, arrayOf(Manifest.permission.READ_CALENDAR))) {
         add(
             GuidePage(
-                title = "Calendar",
-                explanation = "Gearslip reads your next event to show an agenda card on the car " +
-                    "screen. It only reads; it never edits or deletes anything.",
+                title = "Calendar.",
+                explanation = "The car screen shows your next event. Gearslip only reads your calendar.",
+                icon = glyph(Icons.Filled.DateRange),
                 permissions = arrayOf(Manifest.permission.READ_CALENDAR),
             ),
         )
@@ -170,12 +220,22 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     if (!granted(context, callPermissions)) {
         add(
             GuidePage(
-                title = "Phone and contacts",
-                explanation = "When a call comes in, Gearslip matches the number against your " +
-                    "contacts, so the car screen can show a name instead of just digits. The " +
-                    "same permissions let the car screen's Phone app dial a number or call " +
-                    "someone from your contacts.",
+                title = "Calls and contacts.",
+                explanation = "The car shows who's calling by name, and its Phone app can dial a " +
+                    "number or call one of your contacts. Gearslip only reads them.",
+                icon = glyph(Icons.Filled.Phone),
                 permissions = callPermissions,
+            ),
+        )
+    }
+    if (!granted(context, arrayOf(Manifest.permission.BLUETOOTH_CONNECT))) {
+        add(
+            GuidePage(
+                title = "Bluetooth.",
+                explanation = "The first time you plug in, Gearslip offers to pair your phone with the " +
+                    "car, so calls play through its speakers.",
+                icon = glyph(Icons.Filled.Call),
+                permissions = arrayOf(Manifest.permission.BLUETOOTH_CONNECT),
             ),
         )
     }
@@ -183,10 +243,10 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     if (!granted(context, arrayOf(Manifest.permission.POST_NOTIFICATIONS))) {
         add(
             GuidePage(
-                title = "Notifications",
-                explanation = "Gearslip shows a notification while it's connected to the car or " +
-                    "sending it audio, with a button to stop. Without this permission, Android " +
-                    "hides it.",
+                title = "Notifications.",
+                explanation = "While Gearslip is connected, it shows a notification with a button " +
+                    "to stop. Without this, Android hides it.",
+                icon = glyph(Icons.Filled.Notifications),
                 permissions = arrayOf(Manifest.permission.POST_NOTIFICATIONS),
             ),
         )
@@ -194,10 +254,10 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     if (!hasNotificationAccess(context)) {
         add(
             GuidePage(
-                title = "Notification access",
-                explanation = "The car screen shows your phone's notifications and lets you " +
-                    "reply from there. Android only allows that once you grant Gearslip access, " +
-                    "from the list this opens - it needs this to work at all.",
+                title = "Messages.",
+                explanation = "The car shows your messages, reads them aloud and lets you reply. " +
+                    "Turn Gearslip on in the list this opens.",
+                icon = glyph(Icons.Filled.Email),
                 actionLabel = "Open notification access",
                 onAction = {
                     context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
@@ -206,32 +266,16 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
         )
     }
 
-    // --- GrapheneOS ------------------------------------------------------------------
-    add(
-        GuidePage(
-            title = "GrapheneOS exploit protection",
-            explanation = "On GrapheneOS only: open Gearslip's app settings and turn on Exploit " +
-                "protection compatibility mode. Gearslip's native USB and video code trips " +
-                "GrapheneOS's hardened memory checks otherwise. Skip this on any other Android.",
-            actionLabel = "Open app settings",
-            onAction = {
-                context.startActivity(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
-                )
-            },
-        ),
-    )
-
     // --- Android Auto ------------------------------------------------------------------
     val androidAutoPackage = AndroidAuto.installedPackage(context)
         ?.takeIf { AndroidAuto.isActive(context, it) }
     if (androidAutoPackage != null) {
         add(
             GuidePage(
-                title = "Remove Android Auto",
-                explanation = "Android Auto is still installed. It claims the same USB " +
-                    "connection Gearslip needs, so the two fight over it. Disable or uninstall " +
-                    "it from the app info screen this opens.",
+                title = "Turn off Android Auto.",
+                explanation = "Android Auto is still installed, and it fights Gearslip for the car's " +
+                    "USB connection. Disable or uninstall it on the screen this opens.",
+                icon = glyph(Icons.Filled.Close),
                 actionLabel = "Open Android Auto's app info",
                 onAction = {
                     context.startActivity(
@@ -245,22 +289,50 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     // --- Default handler ---------------------------------------------------------------
     add(
         GuidePage(
-            title = "Make Gearslip the default",
-            explanation = "Android has no separate default-app setting for a USB accessory like " +
-                "the car. It just launches whichever single app matches - which is Gearslip, " +
-                "now that Android Auto is out of the way. If a chooser still appears when you " +
-                "plug in, pick Gearslip and tap Always so Android stops asking.",
+            title = "Choose Gearslip.",
+            explanation = "If your phone asks which app to open when you plug into the car, pick " +
+                "Gearslip and tap Always.",
+            icon = glyph(Icons.Filled.Check),
         ),
     )
+
+    // --- Car audio: always asked, and it decides whether the adb pages below show ---------
+    add(
+        GuidePage(
+            title = "Car audio.",
+            explanation = "Pick how music reaches the car. Calls go over Bluetooth either way.",
+            icon = glyph(Icons.Filled.PlayArrow),
+            content = { AudioChoice() },
+        ),
+    )
+
+    // --- Voice: both recommended models in one tap, skipped once they're on the phone ---
+    if (!SpeechModels.RECOMMENDED.all { SpeechModels.isReady(context, it) }) {
+        add(
+            GuidePage(
+                title = "Voice.",
+                explanation = "Ask for directions, music, or a call by voice. Your phone turns speech " +
+                    "into text by itself, and nothing you say leaves it. It needs " +
+                    "${SpeechModels.RECOMMENDED.sumOf { it.downloadMb }} MB, downloaded once. Use Wi-Fi if you can.",
+                icon = { MicIcon(it) },
+                optional = true,
+                actionLabel = "Download voice",
+                onAction = { SpeechModels.downloadRecommended(context) },
+                content = { VoiceDownloadStatus() },
+            ),
+        )
+    }
 
     // --- Optional: each is skipped once its actual effect is already in place --------
     if (!hasProjectMediaOp(context)) {
         add(
             GuidePage(
-                title = "Optional: trust audio every drive",
-                explanation = "Connect the phone to a computer with USB debugging on, and run this " +
-                    "command. It tells Android to trust Gearslip with audio from now on. Skip it " +
-                    "and everything still works, but you tap Start once each time you set off.",
+                title = "No audio prompt.",
+                explanation = "Run this from a computer with USB debugging on, and Android trusts " +
+                    "Gearslip with your audio for good. Without it, you tap Start once each drive.",
+                icon = glyph(Icons.Filled.Build),
+                optional = true,
+                usbOnly = true,
                 command = "adb shell appops set ${BuildConfig.APPLICATION_ID} PROJECT_MEDIA allow",
             ),
         )
@@ -268,10 +340,13 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     if (!granted(context, arrayOf(Manifest.permission.WRITE_SECURE_SETTINGS))) {
         add(
             GuidePage(
-                title = "Optional: keep notifications readable",
-                explanation = "Android treats sending audio to the car like sharing your screen, and " +
-                    "hides what your notifications say. This command switches that off only while " +
-                    "music is going to the car, then puts it back.",
+                title = "Readable notifications.",
+                explanation = "While audio goes to the car, Android hides what notifications say, " +
+                    "as if you were sharing your screen. This lets Gearslip show them during a " +
+                    "drive and hide them again after.",
+                icon = glyph(Icons.Filled.Build),
+                optional = true,
+                usbOnly = true,
                 command = "adb shell pm grant ${BuildConfig.APPLICATION_ID} android.permission.WRITE_SECURE_SETTINGS",
             ),
         )
@@ -279,10 +354,11 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     if (!hasCallScreeningRole(context)) {
         add(
             GuidePage(
-                title = "Optional: answer and decline calls",
-                explanation = "This sets Gearslip as your phone's caller ID and spam-blocking app, " +
-                    "the same kind of consent a call-blocking app asks for. Without it, calls still " +
-                    "ring, but only the phone itself can answer or decline them.",
+                title = "Answer calls.",
+                explanation = "Make Gearslip your caller ID app, and the car can answer and decline " +
+                    "calls. Without it, calls still ring, but only the phone can answer them.",
+                icon = glyph(Icons.Filled.Call),
+                optional = true,
                 actionLabel = "Set up",
                 onAction = onRequestCallScreening,
             ),
@@ -293,8 +369,9 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
     if (SHOW_RECOMMENDED_APPS) {
         add(
             GuidePage(
-                title = "Recommended apps",
+                title = "Good company.",
                 explanation = RECOMMENDED_INTRO,
+                icon = { StarIcon(it) },
                 content = { RecommendedAppsList() },
             ),
         )
@@ -306,15 +383,86 @@ private fun pages(context: Context, onRequestCallScreening: () -> Unit): List<Gu
 }
 
 /**
- * The first-run guide, one page at a time: permissions, then GrapheneOS's exploit-protection
- * toggle, then removing Android Auto if it is still installed, then the optional extras. Nothing
+ * Bluetooth or USB for the car's music, as two cards. Bluetooth comes first and is picked for a
+ * driver who hasn't chosen yet: it never asks for consent, and the map app's voice reaches the car.
+ */
+/** How the voice download is going: a bar while it runs, a line once it's done or failed. */
+@Composable
+private fun VoiceDownloadStatus() {
+    val context = LocalContext.current
+    val progress by SpeechModels.progress.collectAsState()
+    val states = SpeechModels.RECOMMENDED.map { SpeechModels.state(it).collectAsState().value }
+    val line = when {
+        progress != null -> "Downloading, $progress%. You can carry on; it keeps going."
+        states.all { it == SpeechModels.State.Ready } -> "Voice is ready."
+        states.any { it is SpeechModels.State.Failed } -> "The download didn't finish. Tap Download voice to try again."
+        else -> null
+    }
+    LaunchedEffect(Unit) { SpeechModels.init(context) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        progress?.let { LinearProgressIndicator(progress = { it / 100f }, modifier = Modifier.fillMaxWidth()) }
+        line?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    }
+}
+
+@Composable
+private fun AudioChoice() {
+    val usb by CarSettings.pipeAudio.collectAsState()
+    LaunchedEffect(Unit) { if (!CarSettings.pipeAudioChosen) CarSettings.setPipeAudio(false) }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        AudioCard(
+            "Bluetooth", "Recommended",
+            "No prompt each drive, and your map app's voice reaches the car.",
+            selected = !usb,
+        ) { CarSettings.setPipeAudio(false) }
+        AudioCard(
+            "USB", null,
+            "Clearer sound with no delay. Android asks to share audio once each drive.",
+            selected = usb,
+        ) { CarSettings.setPipeAudio(true) }
+    }
+}
+
+@Composable
+private fun AudioCard(title: String, tag: String?, body: String, selected: Boolean, onClick: () -> Unit) {
+    val c = introColors()
+    val shape = RoundedCornerShape(24.dp)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (selected) c.primaryC else Color.Transparent)
+            .border(BorderStroke(2.dp, if (selected) c.primary else c.outline), shape)
+            .selectable(selected, role = Role.RadioButton, onClick = onClick)
+            .padding(16.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Column(Modifier.padding(start = 12.dp)) {
+            Text(title, color = if (selected) c.onPrimaryC else c.onSurface, style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold))
+            tag?.let { Text(it, color = c.primary, style = TextStyle(fontSize = 13.sp, fontWeight = FontWeight.SemiBold)) }
+            Text(
+                body, color = if (selected) c.onPrimaryC else c.onVariant,
+                style = TextStyle(fontSize = 15.sp, lineHeight = 21.sp),
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The first-run guide, one page at a time: permissions, then removing Android Auto if it is still installed, then the optional extras. Nothing
  * here can be verified as done except a permission grant, so every other page is a "Next" a
  * driver takes on trust, with "Skip" sitting right next to it.
  */
 @Composable
 fun SetupGuideScreen(onRequestCallScreening: () -> Unit, onDone: () -> Unit, onlyUsageNotes: Boolean = false) {
     val context = LocalContext.current
-    val pages = remember { if (onlyUsageNotes) listOf(usageNotesPage(context)) else pages(context, onRequestCallScreening) }
+    val allPages = remember { if (onlyUsageNotes) listOf(usageNotesPage(context)) else pages(context, onRequestCallScreening) }
+    // The USB-only pages all come after the car audio page, so dropping them never moves the
+    // page the driver is on.
+    val usbAudio by CarSettings.pipeAudio.collectAsState()
+    val pages = remember(usbAudio) { allPages.filter { usbAudio || !it.usbOnly } }
     var index by remember { mutableIntStateOf(0) }
 
     // Only ours to handle once there is a previous page to return to; at the first page, the
@@ -342,31 +490,23 @@ fun SetupGuideScreen(onRequestCallScreening: () -> Unit, onDone: () -> Unit, onl
         context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
     } ?: false
 
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
-        Column(
-            Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Spacer(Modifier.height(24.dp))
-            // A single page has no progress to show.
-            if (pages.size > 1) {
-                LinearProgressIndicator(
-                    progress = { (index + 1f) / pages.size },
-                    modifier = Modifier.fillMaxWidth().height(10.dp).clip(MaterialTheme.shapes.extraLarge),
-                )
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "${index + 1} of ${pages.size}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // The page scrolls between the progress bar and the buttons, so a tall page (the usage
-            // note's choices, say) never pushes Next off the screen. Short pages stay centred.
+    val c = introColors()
+    // The badges take turns through the phone's three accent colours, as the release intro does.
+    val (badge, onBadge) = listOf(c.primaryC to c.onPrimaryC, c.secondaryC to c.onSecondaryC, c.tertiaryC to c.onTertiaryC)[index % 3]
+    val spin by rememberInfiniteTransition(label = "spin").animateFloat(
+        0f, 360f, infiniteRepeatable(tween(18_000, easing = LinearEasing)), label = "spin",
+    )
+
+    BoxWithConstraints(Modifier.fillMaxSize().background(c.surface).systemBarsPadding()) {
+        val w = maxWidth
+        // One percent of the screen's width, as in the intro, so it scales the same way.
+        fun cq(n: Float): Dp = w * (n / 100f)
+        val density = LocalDensity.current
+        fun cqSp(n: Float): TextUnit = with(density) { cq(n).toSp() }
+
+        Column(Modifier.fillMaxSize().padding(horizontal = cq(8f))) {
+            // The page scrolls above the buttons, so a tall one (the usage notes' choices) never
+            // pushes them off the screen. Short pages sit in the middle.
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
                 key(index) {
                     Column(
@@ -374,88 +514,114 @@ fun SetupGuideScreen(onRequestCallScreening: () -> Unit, onDone: () -> Unit, onl
                             .fillMaxWidth()
                             .verticalScroll(rememberScrollState())
                             .heightIn(min = maxHeight)
-                            .padding(vertical = 24.dp),
+                            .padding(vertical = cq(6f)),
                         verticalArrangement = Arrangement.Center,
                     ) {
-                        Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.extraLarge) {
-                            Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Box(Modifier.size(cq(28f)).pop(entrance(index, 50, 800)), contentAlignment = Alignment.Center) {
+                            Cookie(badge, Modifier.fillMaxSize().graphicsLayer { rotationZ = spin })
+                            Box(Modifier.size(cq(12f))) { page.icon(onBadge) }
+                        }
+                        Spacer(Modifier.height(cq(7f)))
+                        if (page.optional) {
+                            Text(
+                                "OPTIONAL", color = c.primary,
+                                style = TextStyle(fontSize = cqSp(3.4f), fontWeight = FontWeight.Bold, letterSpacing = cqSp(0.4f)),
+                                modifier = Modifier.up(entrance(index, 150, 700), cq(7f)),
+                            )
+                            Spacer(Modifier.height(cq(1.5f)))
+                        }
+                        Text(
+                            page.title, color = c.onSurface,
+                            // Long titles step down a size so they stay on two lines.
+                            style = TextStyle(
+                                fontSize = cqSp(if (page.title.length > 16) 8f else 10f), fontWeight = FontWeight.Black,
+                                letterSpacing = cqSp(-0.4f), lineHeight = cqSp(if (page.title.length > 16) 8.6f else 10.5f),
+                            ),
+                            modifier = Modifier.up(entrance(index, 200, 700), cq(7f)),
+                        )
+                        Spacer(Modifier.height(cq(4f)))
+                        Column(
+                            Modifier.up(entrance(index, 350, 700), cq(7f)),
+                            verticalArrangement = Arrangement.spacedBy(cq(3f)),
+                        ) {
+                            Text(
+                                page.explanation as? AnnotatedString ?: AnnotatedString(page.explanation.toString()),
+                                color = c.onVariant,
+                                style = TextStyle(fontSize = cqSp(4.5f), lineHeight = cqSp(6.5f)),
+                            )
+                            page.command?.let { CopyableCommand(it) }
+                            page.content?.invoke()
+                            if (page.permissions != null && alreadyGranted) {
                                 Text(
-                                    page.title,
-                                    style = MaterialTheme.typography.headlineSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface,
+                                    "Already allowed.", color = c.primary,
+                                    style = TextStyle(fontSize = cqSp(4.2f), fontWeight = FontWeight.SemiBold),
                                 )
-                                Text(
-                                    page.explanation as? AnnotatedString ?: AnnotatedString(page.explanation.toString()),
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                page.command?.let { CopyableCommand(it) }
-                                page.content?.invoke()
                             }
                         }
                     }
                 }
             }
 
+            // A single page has nothing to count.
+            if (pages.size > 1) {
+                Dots(c, pages.size, index, ::cq, Modifier.align(Alignment.CenterHorizontally))
+                Spacer(Modifier.height(cq(5f)))
+            }
+            val back = if (index > 0) ({ index -= 1 }) else null
+            val next = { index += 1 }
             when {
-                page.permissions != null && alreadyGranted -> {
-                    Text(
-                        "Already allowed.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    PrimaryRow(showBack = index > 0, onBack = { index -= 1 }) {
-                        Button(onClick = { index += 1 }, modifier = it) { Text("Next") }
-                    }
-                }
-                page.permissions != null -> {
-                    PrimaryRow(showBack = index > 0, onBack = { index -= 1 }) {
-                        Button(onClick = { launcher.launch(page.permissions) }, modifier = it) { Text("Allow") }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = { index += 1 }) { Text("Skip for now") }
+                page.permissions != null && !alreadyGranted -> {
+                    PillRow(c, ::cq, ::cqSp, back, "Allow") { launcher.launch(page.permissions) }
+                    Pill(c, ::cqSp, "Skip for now", PillStyle.TEXT, Modifier.align(Alignment.CenterHorizontally), next)
                 }
                 page.onAction != null -> {
-                    FilledTonalButton(
-                        onClick = page.onAction,
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                    ) { Text(page.actionLabel ?: "Open") }
-                    Spacer(Modifier.height(8.dp))
-                    PrimaryRow(showBack = index > 0, onBack = { index -= 1 }) {
-                        Button(onClick = { index += 1 }, modifier = it) { Text("Next") }
-                    }
+                    Pill(c, ::cqSp, page.actionLabel ?: "Open", PillStyle.OUTLINED, Modifier.fillMaxWidth().padding(bottom = cq(3f)), page.onAction)
+                    PillRow(c, ::cq, ::cqSp, back, "Next", next)
                 }
-                else -> {
-                    PrimaryRow(showBack = index > 0, onBack = { index -= 1 }) {
-                        Button(onClick = { index += 1 }, modifier = it) {
-                            Text(if (index == pages.lastIndex) "Done" else "Next")
-                        }
-                    }
-                }
+                else -> PillRow(c, ::cq, ::cqSp, back, if (index == pages.lastIndex) "Done" else "Next", next)
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(cq(6f)))
         }
     }
 }
 
-/**
- * The bottom action row: a lower-emphasis Back on the left once there is a previous page, and the
- * page's own primary button - passed [content] so the caller keeps the button's own label and
- * click behavior - filling the rest of the width.
- */
+internal enum class PillStyle { FILLED, OUTLINED, TEXT }
+
+/** The intro's rounded buttons: filled for the step's main action, outlined beside it, bare text to skip. */
 @Composable
-private fun PrimaryRow(showBack: Boolean, onBack: () -> Unit, content: @Composable (Modifier) -> Unit) {
-    if (showBack) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(
-                onClick = onBack,
-                modifier = Modifier.weight(1f).height(52.dp),
-            ) { Text("Back") }
-            content(Modifier.weight(1f).height(52.dp))
-        }
-    } else {
-        content(Modifier.fillMaxWidth().height(52.dp))
+internal fun Pill(c: IntroColors, cqSp: (Float) -> TextUnit, label: String, style: PillStyle, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(50)
+    Box(
+        modifier
+            .clip(shape)
+            .then(
+                when (style) {
+                    PillStyle.FILLED -> Modifier.background(c.primary)
+                    PillStyle.OUTLINED -> Modifier.border(BorderStroke(2.dp, c.outline), shape)
+                    PillStyle.TEXT -> Modifier
+                },
+            )
+            .clickable(onClick = onClick)
+            .heightIn(min = 52.dp)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            label,
+            color = if (style == PillStyle.FILLED) c.onPrimary else c.primary,
+            style = TextStyle(fontSize = cqSp(4.4f), fontWeight = FontWeight.Bold),
+        )
+    }
+}
+
+/** Back on the left once there's a page to go back to, and the page's main action filling the rest. */
+@Composable
+internal fun PillRow(
+    c: IntroColors, cq: (Float) -> Dp, cqSp: (Float) -> TextUnit,
+    onBack: (() -> Unit)?, label: String, onClick: () -> Unit,
+) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(cq(3f))) {
+        if (onBack != null) Pill(c, cqSp, "Back", PillStyle.OUTLINED, Modifier.weight(1f), onBack)
+        Pill(c, cqSp, label, PillStyle.FILLED, Modifier.weight(if (onBack != null) 1.4f else 1f), onClick)
     }
 }

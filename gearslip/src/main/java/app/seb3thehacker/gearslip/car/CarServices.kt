@@ -33,6 +33,12 @@ object CarServices {
     val nav: CarAppConnection by lazy { CarAppConnection(requireNotNull(context)) }
     val media: CarMedia by lazy { CarMedia(requireNotNull(context)) }
 
+    /** [nav], or null before the car screen has set things up. */
+    fun navOrNull(): CarAppConnection? = if (context != null) nav else null
+
+    /** [media], or null before the car screen has set things up: for code outside the car UI. */
+    fun mediaOrNull(): CarMedia? = if (context != null) media else null
+
     /**
      * A second, independent connection for templated apps that aren't navigation apps - Spotify's
      * own Car App Library service is the first of these. Kept apart from [nav] so opening one
@@ -59,6 +65,10 @@ object CarServices {
         app.seb3thehacker.gearslip.notify.CarMotion.start(appContext)
         app.seb3thehacker.gearslip.call.CarCalls.start(appContext)
         CarAssistant.init(appContext)
+        DirectionsVoice.init(appContext)
+        CarBluetooth.init(appContext)
+        BluetoothAudioCheck.init(appContext)
+        LocationCheck.init(appContext)
         CarKeys.init(appContext)
         VoiceReply.init(appContext)
         // Loaded now, while nothing's waiting on it, so the first reply isn't slower than the rest.
@@ -79,13 +89,20 @@ object CarServices {
         if (destination != null && nav.connectedComponent == app.component) {
             nav.navigateTo(destination)
         } else {
+            // Another map app taking over ends the old one's route, or it keeps guiding unseen.
+            if (nav.connectedComponent != app.component) endRoute()
             nav.connect(app, frame.width, frame.height, frame.densityDpi, destination)
         }
     }
 
     fun stopNav() {
         navStopped = true
+        endRoute()
         nav.disconnect()
+    }
+
+    private fun endRoute() {
+        if (nav.navigating) nav.stopNavigating()
     }
 
     /** Undoes [stopNav]'s hold so the last map app comes back, same as it would after a restart. */
@@ -119,6 +136,19 @@ object CarServices {
         // Not torn down and rebuilt per app: the capture covers whatever the phone plays, so
         // switching media apps never costs the driver another consent dialog.
         if (CarSettings.pipeAudio.value) CarAudio.request()
+    }
+
+    /**
+     * Reopens the media app used last, for the car's media button when nothing is open. False
+     * when there's none on record or it's been uninstalled since.
+     */
+    suspend fun reopenLastMedia(): Boolean {
+        val ctx = context ?: return false
+        val last = CarSettings.lastMedia.value?.let(ComponentName::unflattenFromString) ?: return false
+        val app = withContext(Dispatchers.IO) { MediaCatalog.installed(ctx) }
+            .firstOrNull { it.component == last } ?: return false
+        openMedia(app)
+        return true
     }
 
     /** Closes the media app from the car: stops what it's playing and drops the connection. */
@@ -194,6 +224,32 @@ object CarServices {
         return playingPackages.firstNotNullOfOrNull { pkg -> catalog.firstOrNull { it.component.packageName == pkg } }
     }
 
+    /**
+     * The car went away mid-song: pause it, as Android Auto does, so it doesn't carry on out of
+     * the phone's speaker. Unplugging a USB accessory isn't "audio becoming noisy" the way
+     * headphones are, so the apps won't pause themselves. Every playing session is paused, not
+     * just the one Gearslip opened: anything the car was playing was going through the car.
+     */
+    fun pausePhoneMedia(why: String = "the car left") {
+        val ctx = context ?: return
+        val manager = ctx.getSystemService(MediaSessionManager::class.java)
+        val listener = ComponentName(ctx, GearslipNotificationListener::class.java)
+        val playing = try {
+            manager.getActiveSessions(listener).filter { it.playbackState?.state == PlaybackState.STATE_PLAYING }
+        } catch (e: SecurityException) {
+            null
+        }
+        if (playing == null) {
+            // No notification access: the app Gearslip itself is driving is all it can reach.
+            mediaOrNull()?.let { if (it.now.value.playing) it.togglePlay() }
+            return
+        }
+        playing.forEach { runCatching { it.transportControls.pause() } }
+        if (playing.isNotEmpty()) {
+            app.seb3thehacker.gearslip.GearslipLog.i("media: paused ${playing.joinToString { it.packageName }}: $why")
+        }
+    }
+
     /** The car went away: nothing should keep running for a screen that no longer exists. */
     fun shutdown() {
         context?.let { app.seb3thehacker.gearslip.notify.CarMotion.stop(it) }
@@ -202,6 +258,8 @@ object CarServices {
         runCatching { media.disconnect() }
         runCatching { browse.disconnect() }
         CarAssistant.cancel()
+        // About 900 MB that nothing needs once the car's gone.
+        app.seb3thehacker.gearslip.speech.SpeechEngine.unload()
         CarAudio.release()
         _mediaApp.value = null
         navStopped = false

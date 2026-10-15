@@ -78,5 +78,7 @@ object CarAppCatalog {
         CarAppService.CATEGORY_SETTINGS_APP,
         CarAppService.CATEGORY_IOT_APP,
         CarAppService.CATEGORY_WEATHER_APP,
+        // Newer apps declare MEDIA, but our AndroidX 1.7 dependency has no constant for it.
+        "androidx.car.app.category.MEDIA",
     )
 }
