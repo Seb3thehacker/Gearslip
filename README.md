@@ -97,6 +97,17 @@ screen-sharing mode.
   SHA-256, and installs it through Android's own installer. Turn off automatic checks in
   Settings.
 
+## Verify your download
+
+Check that your copy of Gearslip is genuine with
+[AppVerifier](https://github.com/soupslurpr/AppVerifier): share this block to it, or compare it
+with the output of `apksigner verify --print-certs`.
+
+```
+app.seb3thehacker.gearslip
+4C:C5:6E:BD:D1:3A:54:D2:60:EC:A9:B7:E2:B2:AE:6B:30:E2:F2:25:BF:DA:8F:50:8F:07:09:ED:F0:84:94:8B
+```
+
 ## Usage notes
 
 Gearslip can send short notes that show which cars it works in. They stay off unless you
