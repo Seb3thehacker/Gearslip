@@ -44,6 +44,9 @@ object CarAudio {
 
     @Volatile private var link: Link? = null
 
+    /** Opens the car's media channel, left closed while music went over Bluetooth; null once open. */
+    @Volatile var openSink: (() -> Unit)? = null
+
     /** Rate and channel count the capture should use: the car's, or a sensible default. */
     val sampleRate get() = link?.sampleRate ?: 48_000
     val channels get() = link?.channels ?: 2
@@ -71,6 +74,7 @@ object CarAudio {
         when (_capture.value) {
             Capture.ON, Capture.ASKING, Capture.DENIED -> return
             Capture.OFF -> if (link == null) {
+                openSink?.invoke()
                 GearslipLog.i("audio: waiting for the car to offer an audio sink")
             } else {
                 ask()

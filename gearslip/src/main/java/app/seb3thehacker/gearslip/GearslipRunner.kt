@@ -2,6 +2,7 @@ package app.seb3thehacker.gearslip
 
 import android.os.Build
 import app.seb3thehacker.gearslip.audio.AudioLink
+import app.seb3thehacker.gearslip.audio.CarAudio
 import app.seb3thehacker.gearslip.audio.CarMic
 import app.seb3thehacker.gearslip.media.CarMediaStatus
 import app.seb3thehacker.gearslip.car.BluetoothAudioCheck
@@ -160,6 +161,7 @@ class GearslipRunner(
         synchronized(ackLock) { ackLock.notifyAll() } // free an encoder waiting on an ack
         videoSource?.stop()
         videoSource = null
+        CarAudio.openSink = null
         audioLink?.close()
         audioLink = null
         guidanceLink?.close()
@@ -527,7 +529,17 @@ class GearslipRunner(
             // as Android Auto does, instead of letting it play on to no one.
             onTakenBack = { CarServices.pausePhoneMedia("the car switched to another source") },
         )
-        openChannel(media.serviceId)
+        if (CarSettings.pipeAudio.value) {
+            openChannel(media.serviceId)
+        } else {
+            // Many cars switch their source to Android Auto the moment this channel opens, which
+            // cut off music the driver chose to play over Bluetooth. Open it only if they switch.
+            log.i("music goes over Bluetooth: the media channel stays closed, so the car keeps its own source")
+            CarAudio.openSink = {
+                CarAudio.openSink = null
+                openChannel(media.serviceId)
+            }
+        }
     }
 
     /** The car's directions channel, where [DirectionsVoice] reads out each turn. */
