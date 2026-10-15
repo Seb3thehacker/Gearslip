@@ -2,6 +2,7 @@ package app.seb3thehacker.gearslip.ui
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.provider.Settings
 import android.bluetooth.BluetoothDevice
 import android.content.pm.PackageManager
@@ -65,8 +66,18 @@ internal fun WirelessButton() {
         Text(
             "Gearslip needs Bluetooth and nearby Wi-Fi access for this.",
             style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(bottom = 8.dp),
         )
+        // Once Android stops asking, the only way back is the app's own permission settings.
+        TextButton(
+            onClick = {
+                runCatching {
+                    context.startActivity(
+                        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)),
+                    )
+                }
+            },
+            modifier = Modifier.padding(bottom = 4.dp),
+        ) { Text("Enable Nearby devices permission") }
     }
     Button(
         onClick = {
