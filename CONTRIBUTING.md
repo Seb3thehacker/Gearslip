@@ -5,7 +5,7 @@ start there if you aren't sure where to begin.
 
 ## Reporting a bug
 
-Open an issue on [GitHub](https://github.com/Seb3thehacker/gearslip/issues) and include:
+Open an issue on [GitHub](https://github.com/twinksoftware/gearslip/issues) and include:
 
 - your car's make, model, and year, and whether the head unit is the original one; and
 - the log from the drive. Open Logs on the phone app's home screen and tap Share log.

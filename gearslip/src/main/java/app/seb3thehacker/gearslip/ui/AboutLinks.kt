@@ -42,7 +42,7 @@ internal object GearslipLinks {
     /** Gearslip's Monero address. Its row stays hidden while this is empty. */
     const val MONERO = "44gTVxQJY3cirBJ41J5i1bPUVnSkTMhn9esSp1kg9MHwJ3TUz8tkkigUTKwiok5zA5RZvNxyM4pqkAfPs79pPLfaNG21pCn"
     const val MATRIX = "https://matrix.to/#/!mf0_mgBd5KqKpc9FfX_wHp1jFCcwAtPrndIn_oGIyMk?via=matrix.org"
-    const val SOURCE = "https://github.com/Seb3thehacker/gearslip"
+    const val SOURCE = "https://github.com/twinksoftware/gearslip"
     const val CARS = "$SOURCE/blob/main/CARS.md"
 
     fun open(context: Context, url: String) {

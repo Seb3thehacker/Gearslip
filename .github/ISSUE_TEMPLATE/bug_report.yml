@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for reporting. Check the [open issues](https://github.com/Seb3thehacker/gearslip/issues) first, in case someone has already reported it.
+        Thanks for reporting. Check the [open issues](https://github.com/twinksoftware/gearslip/issues) first, in case someone has already reported it.
 
   - type: input
     id: car
