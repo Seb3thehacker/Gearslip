@@ -121,7 +121,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(0.dp))
             SettingsSection(
                 "Support Gearslip",
-                footer = "Gearslip is free, with no ads and no tracking. Donations keep it going.",
+                footer = "Gearslip is free, with no ads and no tracking. Your support keeps it going.",
             ) { DonateRows() }
             ConnectionSection()
             HelpSection(onOpenHelp, onOpenCarPreview, onOpenLogs)

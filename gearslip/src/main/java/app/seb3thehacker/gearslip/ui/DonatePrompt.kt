@@ -9,7 +9,6 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -96,17 +95,14 @@ internal fun DonateDialog(live: Boolean) {
         title = { Text("Glad that drive worked") },
         text = {
             Text(
-                "Gearslip is free, with no ads and no tracking. If it gets you on the road, a " +
-                    "donation keeps it going.",
+                "Gearslip is free, with no ads and no tracking. If it gets you on the road, your " +
+                    "support keeps it going.",
             )
         },
         confirmButton = {
             Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { give(GearslipLinks.SPONSORS) }, Modifier.fillMaxWidth()) {
-                    Text("Donate on GitHub")
-                }
-                OutlinedButton(onClick = { give(GearslipLinks.LIBERAPAY) }, Modifier.fillMaxWidth()) {
-                    Text("Donate on Liberapay")
+                Button(onClick = { give(GearslipLinks.LIBERAPAY) }, Modifier.fillMaxWidth()) {
+                    Text("Support on Liberapay")
                 }
                 TextButton(onClick = { DonatePrompt.answer(context, donated = false) }, Modifier.fillMaxWidth()) {
                     Text("Not now")
