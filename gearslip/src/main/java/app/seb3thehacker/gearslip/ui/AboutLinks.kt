@@ -81,7 +81,7 @@ internal fun DonateRows() {
     SettingsRow(
         "Buy Me a Coffee",
         Modifier.clickable { GearslipLinks.open(context, GearslipLinks.BUY_ME_A_COFFEE) },
-        subtitle = "Give once or monthly, by card",
+        subtitle = "Give once or monthly, by card. Buy Me a Coffee keeps 5%",
         icon = Icons.Filled.Favorite,
         trailing = arrow,
     )
