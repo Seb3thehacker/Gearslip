@@ -60,7 +60,7 @@ object SpeechModels {
             plainFiles = false,
         ),
         CANARY(
-            Role.FINAL, "canary-180m-en", "Canary", "Recommended. Quick, and hears names and places well. NVIDIA NeMo, CC BY 4.0", 198,
+            Role.FINAL, "canary-180m-en", "Canary", "Recommended. Quick, and hears names and places well. Knows English, Spanish, German and French; Gearslip listens in English for now. NVIDIA NeMo, CC BY 4.0", 198,
             "sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8",
             "encoder.int8.onnx", "decoder.int8.onnx", "", modelType = "canary",
         ),
