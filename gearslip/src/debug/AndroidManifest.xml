@@ -3,5 +3,6 @@
     <application>
         <!-- Debug builds only: renders the car UI to PNGs so it can be checked without a car. -->
         <activity android:name="app.seb3thehacker.gearslip.CarPreviewActivity" android:exported="true" />
+        <service android:name="app.seb3thehacker.gearslip.BenchMediaService" android:exported="false" />
     </application>
 </manifest>

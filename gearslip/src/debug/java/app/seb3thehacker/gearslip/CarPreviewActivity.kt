@@ -1,5 +1,6 @@
 package app.seb3thehacker.gearslip
 
+import android.content.ComponentName
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -13,7 +14,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import app.seb3thehacker.gearslip.audio.AudioCaptureService
 import app.seb3thehacker.gearslip.audio.CarAudio
 import app.seb3thehacker.gearslip.car.CarEnvironment
+import app.seb3thehacker.gearslip.car.CarServices
+import app.seb3thehacker.gearslip.media.MediaApp
 import app.seb3thehacker.gearslip.car.CarSettings
+import app.seb3thehacker.gearslip.car.CarSuggestions
+import app.seb3thehacker.gearslip.car.CarToasts
+import androidx.car.app.CarToast
 import app.seb3thehacker.gearslip.car.CarUi
 import java.io.File
 import java.io.FileOutputStream
@@ -26,12 +32,16 @@ import java.io.FileOutputStream
  *       --ei w 800 --ei h 480 --ei dpi 160 --es taps "400,440;90,440"
  *
  * Writes preview-0.png (before any tap), then one more per tap.
+ * Add --ez suggestions true for sample destinations, with optional suggestionsAfter and
+ * clearSuggestionsAfter delays in milliseconds to check updates without moving launcher tiles.
+ * Add --ez media true for a silent sample media session with working playback controls.
  */
 class CarPreviewActivity : ComponentActivity() {
 
     private val main = Handler(Looper.getMainLooper())
     private var projector: ScreenProjector? = null
     private var reader: ImageReader? = null
+    private val suggestionOwner = Any()
     @Volatile private var latest: Bitmap? = null
 
     private val audioPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -109,6 +119,28 @@ class CarPreviewActivity : ComponentActivity() {
             }, 1500)
         }
 
+        // Synthetic suggestions exercise the car UI without requiring a navigation app.
+        if (intent.getBooleanExtra("suggestions", false)) {
+            main.postDelayed({
+                CarSuggestions.begin(suggestionOwner)
+                CarSuggestions.replace(suggestionOwner, listOf("Home", "Work", "Coffee", "Parking", "Fuel", "Recent destination").map { title ->
+                    CarSuggestions.Shortcut(title, title, "Preview destination") {
+                        CarToasts.show(suggestionOwner, "Opened $title", CarToast.LENGTH_SHORT)
+                    }
+                })
+            }, intent.getIntExtra("suggestionsAfter", 500).toLong())
+            val clearAfter = intent.getIntExtra("clearSuggestionsAfter", 0)
+            if (clearAfter > 0) main.postDelayed({ CarSuggestions.clear(suggestionOwner) }, clearAfter.toLong())
+        }
+
+        if (intent.getBooleanExtra("media", false)) {
+            main.postDelayed({
+                val previous = CarSettings.lastMedia.value
+                CarServices.openMedia(MediaApp(ComponentName(this, BenchMediaService::class.java), "Preview player", applicationInfo.uid))
+                CarSettings.setLastMedia(previous.orEmpty())
+            }, 750)
+        }
+
         var step = 0
         fun snap() {
             val bmp = latest ?: return GearslipLog.e("preview: no frame yet for step $step")
@@ -162,6 +194,8 @@ class CarPreviewActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        main.removeCallbacksAndMessages(null)
+        CarSuggestions.clear(suggestionOwner)
         projector?.stop()
         reader?.close()
         CarAudio.onConsentRequested = null

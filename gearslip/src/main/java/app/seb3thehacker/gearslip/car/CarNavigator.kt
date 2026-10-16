@@ -70,12 +70,14 @@ class CarNavigator(startId: String) {
     /** Pushes a new step, unless it's the same screen already on top - tapping the button for
      * where you already are shouldn't grow the trail. */
     private fun push(screen: CarScreen, label: String) {
+        compactSuggestions()
         if (stack.last().screen == screen) return
         stack.add(Crumb(screen, label))
     }
 
     /** The one way back to a clean slate: resets the whole trail to just Home. */
     fun home() {
+        compactSuggestions()
         stack.clear()
         stack.add(Crumb(CarScreen.Home, "Home"))
     }
@@ -105,6 +107,34 @@ class CarNavigator(startId: String) {
     fun showSideLyrics() { sidePanel = SidePanel.LYRICS }
 
     fun closeSidePanel() { sidePanel = SidePanel.NONE }
+
+    var suggestionsExpanded by mutableStateOf(false)
+        private set
+
+    var suggestionsCollapsed by mutableStateOf(false)
+        private set
+
+    fun toggleSuggestionCard() {
+        suggestionsCollapsed = !suggestionsCollapsed
+        compactSuggestions()
+    }
+
+    fun toggleAllSuggestions() {
+        suggestionsCollapsed = false
+        suggestionsExpanded = !suggestionsExpanded
+    }
+
+    fun compactSuggestions() { suggestionsExpanded = false }
+
+    fun collapseSuggestions() {
+        suggestionsCollapsed = true
+        compactSuggestions()
+    }
+
+    fun resetSuggestions() {
+        suggestionsCollapsed = false
+        compactSuggestions()
+    }
 
     /** Component id of the app whose long-press menu (pin, close) is open, or null. */
     var appMenu by mutableStateOf<String?>(null)
@@ -145,6 +175,10 @@ class CarNavigator(startId: String) {
 
     /** One step back, same as tapping the crumb before the current one. */
     fun back() {
+        if (suggestionsExpanded) {
+            compactSuggestions()
+            return
+        }
         if (backInterceptor?.invoke() == true) return
         if (stack.size > 1) stack.removeAt(stack.lastIndex)
     }
